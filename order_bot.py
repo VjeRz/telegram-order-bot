@@ -4,7 +4,14 @@ import os
 import json
 from datetime import datetime
 from telegram import Update
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ConversationHandler, ContextTypes
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    MessageHandler,
+    filters,
+    ConversationHandler,
+    ContextTypes,
+)
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 
@@ -13,10 +20,15 @@ TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 GOOGLE_CREDENTIALS_JSON = os.environ.get("GOOGLE_CREDENTIALS_JSON")
 SPREADSHEET_NAME = os.environ.get("SPREADSHEET_NAME", "Order_Data_TelBot")
 
+# Cloudflare Worker proxy URL (set this in Railway environment variables)
+CLOUDFLARE_WORKER_URL = os.environ.get("CLOUDFLARE_WORKER_URL", "")
+
 WAITING_FOR_ORDER_ID = 1
 
 # ---------- LOGGING ----------
-logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
+logging.basicConfig(
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
+)
 logger = logging.getLogger(__name__)
 
 # ---------- GOOGLE SHEETS SETUP ----------
@@ -47,6 +59,10 @@ def get_last_update_time():
     return datetime.now().strftime("%d/%m/%Y")
 
 # ---------- BOT HANDLERS ----------
+async def ping(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Simple test command to verify bot is responding."""
+    await update.message.reply_text("pong")
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     hour = datetime.now().hour
     if hour < 12:
@@ -67,19 +83,23 @@ async def receive_order_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data is None:
         last_update = get_last_update_time()
-        error_msg = (f"❌ *Maaf Order ID Tidak Ditemukan atau Belum Terupdate*\n"
-                     f"📅 *Last Update Data:* {last_update}\n\n"
-                     f"Silahkan Coba Lagi dengan memasukan Order ID Lain atau Perbaiki formatnya.")
+        error_msg = (
+            f"❌ *Maaf Order ID Tidak Ditemukan atau Belum Terupdate*\n"
+            f"📅 *Last Update Data:* {last_update}\n\n"
+            f"Silahkan Coba Lagi dengan memasukan Order ID Lain atau Perbaiki formatnya."
+        )
         await update.message.reply_text(error_msg, parse_mode="Markdown")
         return WAITING_FOR_ORDER_ID
 
-    reply = (f"✅ *Order ID:* {order_id}\n"
-             f"📢 *Channel Name:* {data['channel']}\n"
-             f"👤 *SalesForce:* {data['salesforce']}\n"
-             f"📅 *Tanggal Submit:* {data['submit_date']}\n"
-             f"⚙️ *Status Order:* {data['status']}\n"
-             f"⚠️ *Fallout Reason:* {data['fallout']}\n\n"
-             f"Jika ingin mengecek lagi, ketik /start")
+    reply = (
+        f"✅ *Order ID:* {order_id}\n"
+        f"📢 *Channel Name:* {data['channel']}\n"
+        f"👤 *SalesForce:* {data['salesforce']}\n"
+        f"📅 *Tanggal Submit:* {data['submit_date']}\n"
+        f"⚙️ *Status Order:* {data['status']}\n"
+        f"⚠️ *Fallout Reason:* {data['fallout']}\n\n"
+        f"Jika ingin mengecek lagi, ketik /start"
+    )
     await update.message.reply_text(reply, parse_mode="Markdown")
     return ConversationHandler.END
 
@@ -94,11 +114,29 @@ def main():
     if not GOOGLE_CREDENTIALS_JSON:
         raise ValueError("GOOGLE_CREDENTIALS_JSON environment variable not set")
 
-    app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
+    # Build the application with optional Cloudflare proxy
+    builder = Application.builder().token(TELEGRAM_BOT_TOKEN)
+    if CLOUDFLARE_WORKER_URL:
+        # Append "/bot" to the worker URL as required by python-telegram-bot
+        base_url = f"{CLOUDFLARE_WORKER_URL.rstrip('/')}/bot"
+        builder = builder.base_url(base_url)
+        logger.info(f"Using proxy base URL: {base_url}")
+    else:
+        logger.info("No proxy URL set, connecting directly to Telegram API")
 
+    app = builder.build()
+
+    # Add simple ping command for testing
+    app.add_handler(CommandHandler("ping", ping))
+
+    # Conversation handler for order lookup
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler("start", start)],
-        states={WAITING_FOR_ORDER_ID: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_order_id)]},
+        states={
+            WAITING_FOR_ORDER_ID: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_order_id)
+            ]
+        },
         fallbacks=[CommandHandler("cancel", cancel)],
         allow_reentry=True,
     )
