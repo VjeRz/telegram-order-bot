@@ -1,0 +1,1 @@
+worker: python order_bot.py
