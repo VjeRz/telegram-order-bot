@@ -11,10 +11,9 @@ from oauth2client.service_account import ServiceAccountCredentials
 # ---------- CONFIGURATION ----------
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 GOOGLE_CREDENTIALS_JSON = os.environ.get("GOOGLE_CREDENTIALS_JSON")
-SPREADSHEET_NAME = os.environ.get("SPREADSHEET_NAME", "YOUR_SPREADSHEET_NAME")
+SPREADSHEET_NAME = os.environ.get("SPREADSHEET_NAME", "Order_Data_TelBot")
 
 WAITING_FOR_ORDER_ID = 1
-TIMEOUT_SECONDS = 300
 
 # ---------- LOGGING ----------
 logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
@@ -50,28 +49,19 @@ def get_last_update_time():
 # ---------- BOT HANDLERS ----------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     hour = datetime.now().hour
-    if hour < 12: greeting = "Good Morning"
-    elif hour < 18: greeting = "Good Afternoon"
-    else: greeting = "Good Night"
+    if hour < 12:
+        greeting = "Good Morning"
+    elif hour < 18:
+        greeting = "Good Afternoon"
+    else:
+        greeting = "Good Night"
 
     text = f"{greeting}, Masukan Order ID\nContoh: AOs326032509275620607db90"
     await update.message.reply_text(text)
-
-    if "order_timeout" in context.chat_data:
-        context.chat_data["order_timeout"].schedule_removal()
-    job = context.job_queue.run_once(timeout_callback, TIMEOUT_SECONDS, data={"chat_id": update.effective_chat.id})
-    context.chat_data["order_timeout"] = job
     return WAITING_FOR_ORDER_ID
-
-async def timeout_callback(context: ContextTypes.DEFAULT_TYPE):
-    await context.bot.send_message(chat_id=context.job.chat_id, text="⏰ Waktu habis. Silakan ketik /start untuk memulai lagi.")
 
 async def receive_order_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
     order_id = update.message.text.strip()
-
-    if "order_timeout" in context.chat_data:
-        context.chat_data["order_timeout"].schedule_removal()
-        del context.chat_data["order_timeout"]
 
     data = find_order_details(order_id)
 
@@ -94,9 +84,6 @@ async def receive_order_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if "order_timeout" in context.chat_data:
-        context.chat_data["order_timeout"].schedule_removal()
-        del context.chat_data["order_timeout"]
     await update.message.reply_text("Perintah dibatalkan. Ketik /start untuk memulai lagi.")
     return ConversationHandler.END
 
