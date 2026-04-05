@@ -21,7 +21,6 @@ TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 GOOGLE_CREDENTIALS_JSON = os.environ.get("GOOGLE_CREDENTIALS_JSON")
 SPREADSHEET_NAME = os.environ.get("SPREADSHEET_NAME", "Order_Data_TelBot")
 
-# Cloudflare Worker proxy URL (set in Railway environment variables)
 CLOUDFLARE_WORKER_URL = os.environ.get("CLOUDFLARE_WORKER_URL", "")
 
 WAITING_FOR_ORDER_ID = 1
@@ -47,7 +46,6 @@ def clean_text(s):
     """Remove invisible characters and trim spaces"""
     if not s:
         return ""
-    # Remove zero-width spaces, non-breaking spaces, etc.
     s = re.sub(r'[\u200b\u00a0\u200c\u200d]', '', str(s))
     return s.strip()
 
@@ -77,44 +75,37 @@ async def ping(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("pong")
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    hour = datetime.now().hour
-    if hour < 12:
-        greeting = "Good Morning"
-    elif hour < 18:
-        greeting = "Good Afternoon"
-    else:
-        greeting = "Good Night"
-
-    text = f"{greeting}, Masukan Order ID\nContoh: AOs326032509275620607db90"
+    # Fixed greeting (always the same, no time check)
+    text = "Semangat Pagi, Masukan Order ID\nContoh: AOs326032509275620607db90"
     await update.message.reply_text(text)
     return WAITING_FOR_ORDER_ID
 
 async def receive_order_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
     raw_input = update.message.text
-    order_id = clean_text(raw_input)  # Clean user input
+    order_id = clean_text(raw_input)
 
     data = find_order_details(order_id)
 
     if data is None:
         last_update = get_last_update_time()
         error_msg = (
-            f"❌ *Maaf Order ID Tidak Ditemukan atau Belum Terupdate*\n"
-            f"📅 *Last Update Data:* {last_update}\n\n"
+            f"❌ Maaf Order ID Tidak Ditemukan atau Belum Terupdate\n"
+            f"📅 Last Update Data: {last_update}\n\n"
             f"Silahkan Coba Lagi dengan memasukan Order ID Lain atau Perbaiki formatnya."
         )
-        await update.message.reply_text(error_msg, parse_mode="Markdown")
+        await update.message.reply_text(error_msg)  # No Markdown
         return WAITING_FOR_ORDER_ID
 
     reply = (
-        f"✅ *Order ID:* {order_id}\n"
-        f"📢 *Channel Name:* {data['channel']}\n"
-        f"👤 *SalesForce:* {data['salesforce']}\n"
-        f"📅 *Tanggal Submit:* {data['submit_date']}\n"
-        f"⚙️ *Status Order:* {data['status']}\n"
-        f"⚠️ *Fallout Reason:* {data['fallout']}\n\n"
+        f"✅ Order ID: {order_id}\n"
+        f"📢 Channel Name: {data['channel']}\n"
+        f"👤 SalesForce: {data['salesforce']}\n"
+        f"📅 Tanggal Submit: {data['submit_date']}\n"
+        f"⚙️ Status Order: {data['status']}\n"
+        f"⚠️ Fallout Reason: {data['fallout']}\n\n"
         f"Jika ingin mengecek lagi, ketik /start"
     )
-    await update.message.reply_text(reply, parse_mode="Markdown")
+    await update.message.reply_text(reply)  # No Markdown
     return ConversationHandler.END
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
