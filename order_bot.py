@@ -2,6 +2,7 @@
 import logging
 import os
 import json
+import re
 from datetime import datetime
 from telegram import Update
 from telegram.ext import (
@@ -20,7 +21,7 @@ TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 GOOGLE_CREDENTIALS_JSON = os.environ.get("GOOGLE_CREDENTIALS_JSON")
 SPREADSHEET_NAME = os.environ.get("SPREADSHEET_NAME", "Order_Data_TelBot")
 
-# Cloudflare Worker proxy URL (set this in Railway environment variables)
+# Cloudflare Worker proxy URL (set in Railway environment variables)
 CLOUDFLARE_WORKER_URL = os.environ.get("CLOUDFLARE_WORKER_URL", "")
 
 WAITING_FOR_ORDER_ID = 1
@@ -42,10 +43,22 @@ def init_google_sheet():
 sheet = init_google_sheet()
 
 # ---------- HELPER FUNCTIONS ----------
+def clean_text(s):
+    """Remove invisible characters and trim spaces"""
+    if not s:
+        return ""
+    # Remove zero-width spaces, non-breaking spaces, etc.
+    s = re.sub(r'[\u200b\u00a0\u200c\u200d]', '', str(s))
+    return s.strip()
+
 def find_order_details(order_id: str):
+    """Case‑insensitive lookup with cleaning"""
+    clean_input = clean_text(order_id).lower()
+    
     records = sheet.get_all_records()
     for record in records:
-        if str(record.get("Order ID", "")).strip() == order_id.strip():
+        sheet_value = clean_text(record.get("Order ID", "")).lower()
+        if sheet_value == clean_input:
             return {
                 "channel": record.get("Channel Name", "N/A"),
                 "salesforce": record.get("SalesForce", "N/A"),
@@ -77,7 +90,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return WAITING_FOR_ORDER_ID
 
 async def receive_order_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    order_id = update.message.text.strip()
+    raw_input = update.message.text
+    order_id = clean_text(raw_input)  # Clean user input
 
     data = find_order_details(order_id)
 
@@ -117,7 +131,6 @@ def main():
     # Build the application with optional Cloudflare proxy
     builder = Application.builder().token(TELEGRAM_BOT_TOKEN)
     if CLOUDFLARE_WORKER_URL:
-        # Append "/bot" to the worker URL as required by python-telegram-bot
         base_url = f"{CLOUDFLARE_WORKER_URL.rstrip('/')}/bot"
         builder = builder.base_url(base_url)
         logger.info(f"Using proxy base URL: {base_url}")
