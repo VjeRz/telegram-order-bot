@@ -98,15 +98,15 @@ async def receive_order_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return WAITING_FOR_ORDER_ID
 
     reply = (
-        f"Order ID: {order_id}\n"
-        f"Order Status: {data['order_status']}\n"
-        f"Channel Name: {data['channel']}\n"
-        f"Fallout Reason: {data['fallout']}\n"
-        f"Salesforce: {data['salesforce']}\n"
-        f"Tanggal Complete: {data['tanggal_complete']}\n"
-        f"Tanggal Input: {data['tanggal_input']}\n"
-        f"Sub Error Code: {data['sub_error']}\n"
-        f"Technician Notes: {data['technician_notes']}\n\n"
+        f"✅ Order ID: {order_id}\n"
+        f"⚙️ Order Status: {data['order_status']}\n"
+        f"📢 Channel Name: {data['channel']}\n"
+        f"⚠️ Fallout Reason: {data['fallout']}\n"
+        f"👤 Salesforce: {data['salesforce']}\n"
+        f"📅 Tanggal Complete: {data['tanggal_complete']}\n"
+        f"📅 Tanggal Input: {data['tanggal_input']}\n"
+        f"🧠 Sub Error Code: {data['sub_error']}\n"
+        f"👨🏼‍🔧 Technician Notes: {data['technician_notes']}\n\n"
         f"Jika ingin mengecek lagi, ketik /start"
     )
     await update.message.reply_text(reply)
