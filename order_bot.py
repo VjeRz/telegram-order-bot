@@ -50,7 +50,7 @@ def clean_text(s):
     return s.strip()
 
 def find_order_details(order_id: str):
-    """Case‑insensitive lookup with cleaning"""
+    """Case‑insensitive lookup returning all required fields"""
     clean_input = clean_text(order_id).lower()
     
     records = sheet.get_all_records()
@@ -58,11 +58,14 @@ def find_order_details(order_id: str):
         sheet_value = clean_text(record.get("Order ID", "")).lower()
         if sheet_value == clean_input:
             return {
+                "order_status": record.get("Status Order", "N/A"),
                 "channel": record.get("Channel Name", "N/A"),
+                "fallout": record.get("Fallout Reason", "") or "(Blank)",
                 "salesforce": record.get("SalesForce", "N/A"),
-                "submit_date": record.get("Tanggal Submit", "N/A"),
-                "status": record.get("Status Order", "N/A"),
-                "fallout": record.get("Fallout Reason", "") or "(Blank)"
+                "tanggal_complete": record.get("Tanggal Complete", "-"),
+                "tanggal_input": record.get("Tanggal Input", "-"),
+                "sub_error": record.get("Sub Error Code", "-"),
+                "technician_notes": record.get("Technician Notes", "-"),
             }
     return None
 
@@ -71,11 +74,9 @@ def get_last_update_time():
 
 # ---------- BOT HANDLERS ----------
 async def ping(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Simple test command to verify bot is responding."""
     await update.message.reply_text("pong")
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Fixed greeting (always the same, no time check)
     text = "Semangat Pagi, Masukan Order ID\nContoh: AOs326032509275620607db90"
     await update.message.reply_text(text)
     return WAITING_FOR_ORDER_ID
@@ -93,19 +94,22 @@ async def receive_order_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"📅 Last Update Data: {last_update}\n\n"
             f"Silahkan Coba Lagi dengan memasukan Order ID Lain atau Perbaiki formatnya."
         )
-        await update.message.reply_text(error_msg)  # No Markdown
+        await update.message.reply_text(error_msg)
         return WAITING_FOR_ORDER_ID
 
     reply = (
-        f"✅ Order ID: {order_id}\n"
-        f"📢 Channel Name: {data['channel']}\n"
-        f"👤 SalesForce: {data['salesforce']}\n"
-        f"📅 Tanggal Submit: {data['submit_date']}\n"
-        f"⚙️ Status Order: {data['status']}\n"
-        f"⚠️ Fallout Reason: {data['fallout']}\n\n"
+        f"Order ID: {order_id}\n"
+        f"Order Status: {data['order_status']}\n"
+        f"Channel Name: {data['channel']}\n"
+        f"Fallout Reason: {data['fallout']}\n"
+        f"Salesforce: {data['salesforce']}\n"
+        f"Tanggal Complete: {data['tanggal_complete']}\n"
+        f"Tanggal Input: {data['tanggal_input']}\n"
+        f"Sub Error Code: {data['sub_error']}\n"
+        f"Technician Notes: {data['technician_notes']}\n\n"
         f"Jika ingin mengecek lagi, ketik /start"
     )
-    await update.message.reply_text(reply)  # No Markdown
+    await update.message.reply_text(reply)
     return ConversationHandler.END
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -119,7 +123,6 @@ def main():
     if not GOOGLE_CREDENTIALS_JSON:
         raise ValueError("GOOGLE_CREDENTIALS_JSON environment variable not set")
 
-    # Build the application with optional Cloudflare proxy
     builder = Application.builder().token(TELEGRAM_BOT_TOKEN)
     if CLOUDFLARE_WORKER_URL:
         base_url = f"{CLOUDFLARE_WORKER_URL.rstrip('/')}/bot"
@@ -130,10 +133,8 @@ def main():
 
     app = builder.build()
 
-    # Add simple ping command for testing
     app.add_handler(CommandHandler("ping", ping))
 
-    # Conversation handler for order lookup
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler("start", start)],
         states={
