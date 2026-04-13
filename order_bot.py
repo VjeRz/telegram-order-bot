@@ -46,26 +46,24 @@ def init_order_sheet(sheet_name):
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
     creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
     client = gspread.authorize(creds)
-    return client.open(sheet_name).sheet1   # first worksheet (order data)
+    return client.open(sheet_name).sheet1
 
 def get_bot_data_spreadsheet(spreadsheet_name):
     creds_dict = json.loads(GOOGLE_CREDENTIALS_JSON)
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
     creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
     client = gspread.authorize(creds)
-    return client.open(spreadsheet_name)    # whole spreadsheet
+    return client.open(spreadsheet_name)
 
 order_sheet = init_order_sheet(ORDER_SHEET_NAME)
 bot_data_spreadsheet = get_bot_data_spreadsheet(BOT_DATA_SHEET_NAME)
 
-# Get or create Users tab
 try:
     users_sheet = bot_data_spreadsheet.worksheet("Users")
 except gspread.WorksheetNotFound:
     users_sheet = bot_data_spreadsheet.add_worksheet("Users", 100, 20)
     users_sheet.append_row(["TelegramID", "Name", "Email", "RoleGroup", "SubRole", "ApprovalStatus", "RegistrationDate", "ApprovedBy", "ApprovedAt", "WOK", "SFID"])
 
-# Get or create UsageLog tab
 try:
     usage_sheet = bot_data_spreadsheet.worksheet("UsageLog")
 except gspread.WorksheetNotFound:
@@ -138,16 +136,18 @@ def log_usage(telegram_id, order_id):
         order_id
     ])
 
-def notify_approver(bot, user_id, name, role_group, subrole, wok, sfid):
+def notify_approver(bot, user_id, name, role_group, subrole, wok="", sfid=""):
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("✅ Approve", callback_data=f"approve_{user_id}"),
          InlineKeyboardButton("❌ Reject", callback_data=f"reject_{user_id}")]
     ])
-    bot.send_message(
-        chat_id=IT_TELEGRAM_ID,
-        text=f"New registration pending:\nName: {name}\nRole: {role_group} - {subrole}\nWOK: {wok}\nSFID: {sfid}\nUser ID: {user_id}",
-        reply_markup=keyboard
-    )
+    text = f"New registration pending:\nName: {name}\nRole: {role_group} - {subrole}"
+    if wok:
+        text += f"\nWOK: {wok}"
+    if sfid:
+        text += f"\nSFID: {sfid}"
+    text += f"\nUser ID: {user_id}"
+    bot.send_message(chat_id=IT_TELEGRAM_ID, text=text, reply_markup=keyboard)
 
 # ---------- REGISTRATION FLOW ----------
 async def register_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -214,14 +214,21 @@ async def reg_subrole(update: Update, context: ContextTypes.DEFAULT_TYPE):
     }
     subrole = sub_map.get(sub, sub)
     context.user_data["reg_subrole"] = subrole
-    wok_keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("Manado-Talaud", callback_data="wok_Manado-Talaud")],
-        [InlineKeyboardButton("Bitung-Minahasa", callback_data="wok_Bitung-Minahasa")],
-        [InlineKeyboardButton("Bolaang Mongondow", callback_data="wok_Bolaang Mongondow")],
-        [InlineKeyboardButton("Gorontalo", callback_data="wok_Gorontalo")]
-    ])
-    await query.edit_message_text("Pilih WOK (Working Area):", reply_markup=wok_keyboard)
-    return REG_WOK
+    group = context.user_data["reg_role_group"]
+    if group == "Agency":
+        wok_keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("Manado-Talaud", callback_data="wok_Manado-Talaud")],
+            [InlineKeyboardButton("Bitung-Minahasa", callback_data="wok_Bitung-Minahasa")],
+            [InlineKeyboardButton("Bolaang Mongondow", callback_data="wok_Bolaang Mongondow")],
+            [InlineKeyboardButton("Gorontalo", callback_data="wok_Gorontalo")]
+        ])
+        await query.edit_message_text("Pilih WOK (Working Area):", reply_markup=wok_keyboard)
+        return REG_WOK
+    else:
+        # Branch or Technician: skip WOK and SFID, go directly to saving
+        await query.edit_message_text("Registration completed. Saving your data...")
+        # Jump to saving step
+        return await save_registration(update, context, skip_wok_sfid=True)
 
 async def reg_wok(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -234,12 +241,27 @@ async def reg_wok(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def reg_sfid(update: Update, context: ContextTypes.DEFAULT_TYPE):
     sfid = update.message.text.strip()
     context.user_data["reg_sfid"] = sfid
-    user_id = update.effective_user.id
-    name = context.user_data["reg_name"]
-    email = context.user_data["reg_email"]
-    role_group = context.user_data["reg_role_group"]
-    subrole = context.user_data["reg_subrole"]
-    wok = context.user_data["reg_wok"]
+    return await save_registration(update, context, skip_wok_sfid=False)
+
+async def save_registration(update: Update, context: ContextTypes.DEFAULT_TYPE, skip_wok_sfid=False):
+    # This function can be called either from reg_sfid (Agency) or directly from reg_subrole (Branch/Technician)
+    if isinstance(update, Update) and update.callback_query:
+        # If called from callback, we need to send a new message
+        await update.callback_query.edit_message_text("Saving registration data...")
+        effective_user = update.callback_query.from_user
+        send_message = update.callback_query.message.reply_text
+    else:
+        effective_user = update.effective_user
+        send_message = update.message.reply_text
+
+    user_id = effective_user.id
+    name = context.user_data.get("reg_name")
+    email = context.user_data.get("reg_email")
+    role_group = context.user_data.get("reg_role_group")
+    subrole = context.user_data.get("reg_subrole")
+    wok = context.user_data.get("reg_wok", "") if not skip_wok_sfid else ""
+    sfid = context.user_data.get("reg_sfid", "") if not skip_wok_sfid else ""
+
     if role_group == "Branch":
         status = "approved"
         approved_by = "auto"
@@ -251,12 +273,14 @@ async def reg_sfid(update: Update, context: ContextTypes.DEFAULT_TYPE):
         approved_at = ""
         reply_text = "Registration submitted. You will be notified once approved by IT."
         notify_approver(update.get_bot(), user_id, name, role_group, subrole, wok, sfid)
+
     users_sheet.append_row([
         user_id, name, email, role_group, subrole, status,
         datetime.now().strftime("%Y-%m-%d %H:%M:%S"), approved_by, approved_at,
         wok, sfid
     ])
-    await update.message.reply_text(reply_text)
+
+    await send_message(reply_text)
     return ConversationHandler.END
 
 # ---------- APPROVAL HANDLERS ----------
@@ -294,7 +318,8 @@ async def pending(update: Update, context: ContextTypes.DEFAULT_TYPE):
     pending_list = []
     for row in records:
         if row.get("ApprovalStatus") == "pending" and row.get("RoleGroup") in ["Agency", "Technician"]:
-            pending_list.append(f"{row.get('Name')} - {row.get('RoleGroup')}/{row.get('SubRole')} - WOK: {row.get('WOK', 'N/A')} - ID: {row.get('TelegramID')}")
+            wok = row.get("WOK", "") if row.get("RoleGroup") == "Agency" else "N/A"
+            pending_list.append(f"{row.get('Name')} - {row.get('RoleGroup')}/{row.get('SubRole')} - WOK: {wok} - ID: {row.get('TelegramID')}")
     if not pending_list:
         await update.message.reply_text("No pending registrations.")
     else:
@@ -421,6 +446,23 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def ping(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("pong")
 
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    help_text = (
+        "📖 *Daftar Perintah Bot*\n\n"
+        "/register - Memulai proses registrasi pengguna baru\n"
+        "/start - Memeriksa Order ID (hanya untuk pengguna terdaftar & disetujui)\n"
+        "/pending - Melihat daftar registrasi yang menunggu persetujuan (khusus IT)\n"
+        "/report [day|week|month|YYYY-MM-DD YYYY-MM-DD] - Laporan penggunaan (untuk Manager, SPV, HSA, IT)\n"
+        "/ping - Tes koneksi bot\n"
+        "/help - Menampilkan pesan bantuan ini\n\n"
+        "📌 *Catatan:*\n"
+        "- Registrasi untuk Agency dan Technician memerlukan persetujuan IT.\n"
+        "- Branch (Inputters, Supervisor, Manager, IT) langsung disetujui.\n"
+        "- Hanya Agency yang diminta WOK dan SF ID. Branch dan Technician tidak perlu.\n"
+        "- Laporan harian/mingguan ditampilkan sebagai teks, laporan bulanan/custom sebagai file CSV."
+    )
+    await update.message.reply_text(help_text, parse_mode="Markdown")
+
 # ---------- MAIN ----------
 def main():
     if not TELEGRAM_BOT_TOKEN:
@@ -460,6 +502,7 @@ def main():
     app.add_handler(CommandHandler("pending", pending))
     app.add_handler(CommandHandler("report", report))
     app.add_handler(CommandHandler("ping", ping))
+    app.add_handler(CommandHandler("help", help_command))
 
     # Order lookup conversation
     order_conv = ConversationHandler(
