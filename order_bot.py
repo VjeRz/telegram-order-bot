@@ -41,27 +41,35 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # ---------- GOOGLE SHEETS SETUP ----------
-def init_sheet(sheet_name):
+def init_order_sheet(sheet_name):
     creds_dict = json.loads(GOOGLE_CREDENTIALS_JSON)
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
     creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
     client = gspread.authorize(creds)
-    return client.open(sheet_name).sheet1
+    return client.open(sheet_name).sheet1   # first worksheet (order data)
 
-order_sheet = init_sheet(ORDER_SHEET_NAME)
-bot_data = init_sheet(BOT_DATA_SHEET_NAME)
+def get_bot_data_spreadsheet(spreadsheet_name):
+    creds_dict = json.loads(GOOGLE_CREDENTIALS_JSON)
+    scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+    creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+    client = gspread.authorize(creds)
+    return client.open(spreadsheet_name)    # whole spreadsheet
 
-# Users and UsageLog tabs (same as before)
+order_sheet = init_order_sheet(ORDER_SHEET_NAME)
+bot_data_spreadsheet = get_bot_data_spreadsheet(BOT_DATA_SHEET_NAME)
+
+# Get or create Users tab
 try:
-    users_sheet = bot_data.worksheet("Users")
+    users_sheet = bot_data_spreadsheet.worksheet("Users")
 except gspread.WorksheetNotFound:
-    users_sheet = bot_data.add_worksheet("Users", 100, 20)
+    users_sheet = bot_data_spreadsheet.add_worksheet("Users", 100, 20)
     users_sheet.append_row(["TelegramID", "Name", "Email", "RoleGroup", "SubRole", "ApprovalStatus", "RegistrationDate", "ApprovedBy", "ApprovedAt", "WOK", "SFID"])
 
+# Get or create UsageLog tab
 try:
-    usage_sheet = bot_data.worksheet("UsageLog")
+    usage_sheet = bot_data_spreadsheet.worksheet("UsageLog")
 except gspread.WorksheetNotFound:
-    usage_sheet = bot_data.add_worksheet("UsageLog", 1000, 10)
+    usage_sheet = bot_data_spreadsheet.add_worksheet("UsageLog", 1000, 10)
     usage_sheet.append_row(["Timestamp", "TelegramID", "UserName", "RoleGroup", "SubRole", "OrderID"])
 
 # ---------- HELPER FUNCTIONS ----------
@@ -141,7 +149,7 @@ def notify_approver(bot, user_id, name, role_group, subrole, wok, sfid):
         reply_markup=keyboard
     )
 
-# ---------- REGISTRATION FLOW (unchanged) ----------
+# ---------- REGISTRATION FLOW ----------
 async def register_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if is_user_approved(user_id):
@@ -364,7 +372,7 @@ async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
             lines.append(f"👤 {data['name']} ({data['role']}) - {data['count']} lookups - Duration: {duration:.0f} min")
         await update.message.reply_text("\n".join(lines))
 
-# ---------- ORDER LOOKUP (MODIFIED WITH STO & WOK) ----------
+# ---------- ORDER LOOKUP ----------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if not is_user_approved(user_id):
