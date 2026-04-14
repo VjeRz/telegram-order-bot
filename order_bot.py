@@ -25,7 +25,6 @@ GOOGLE_CREDENTIALS_JSON = os.environ.get("GOOGLE_CREDENTIALS_JSON")
 ORDER_SHEET_NAME = os.environ.get("SPREADSHEET_NAME", "Order_Data_TelBot")
 BOT_DATA_SHEET_NAME = os.environ.get("BOT_DATA_SHEET_NAME", "Bot_Data")
 CLOUDFLARE_WORKER_URL = os.environ.get("CLOUDFLARE_WORKER_URL", "")
-# IT_TELEGRAM_ID is no longer strictly needed if we use role‑based access, but keep for optional notifications
 IT_TELEGRAM_ID = int(os.environ.get("IT_TELEGRAM_ID", "0"))
 
 WAITING_FOR_ORDER_ID = 1
@@ -138,11 +137,10 @@ def log_usage(telegram_id, order_id):
     ])
 
 def notify_approver(bot, user_id, name, role_group, subrole, wok="", sfid=""):
-    # Optional: still send a message to a specific IT user if IT_TELEGRAM_ID is set
     if IT_TELEGRAM_ID:
         keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("✅ Approve", callback_data=f"approve_{user_id}"),
-             InlineKeyboardButton("❌ Reject", callback_data=f"reject_{user_id}")]
+            [InlineKeyboardButton("✅ Approve", callback_data=f"approve_{user_id}_"),
+             InlineKeyboardButton("❌ Reject", callback_data=f"reject_{user_id}_")]
         ])
         text = f"New registration pending:\nName: {name}\nRole: {role_group} - {subrole}"
         if wok:
@@ -228,7 +226,6 @@ async def reg_subrole(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("Pilih WOK (Working Area):", reply_markup=wok_keyboard)
         return REG_WOK
     else:
-        # Branch or Technician: skip WOK and SFID, go directly to saving
         await query.edit_message_text("Registration completed. Saving your data...")
         return await save_registration(update, context, skip_wok_sfid=True)
 
@@ -262,13 +259,11 @@ async def save_registration(update: Update, context: ContextTypes.DEFAULT_TYPE, 
     wok = context.user_data.get("reg_wok", "") if not skip_wok_sfid else ""
     sfid = context.user_data.get("reg_sfid", "") if not skip_wok_sfid else ""
 
-    # ALL registrations now require approval (no auto-approval)
     status = "pending"
     approved_by = ""
     approved_at = ""
     reply_text = "Registration submitted. You will be notified once approved by IT."
 
-    # Notify IT if a specific IT_TELEGRAM_ID is set (optional)
     notify_approver(update.get_bot(), user_id, name, role_group, subrole, wok, sfid)
 
     users_sheet.append_row([
@@ -280,10 +275,9 @@ async def save_registration(update: Update, context: ContextTypes.DEFAULT_TYPE, 
     await send_message(reply_text)
     return ConversationHandler.END
 
-# ---------- APPROVAL HANDLERS (with /pending buttons) ----------
+# ---------- APPROVAL HANDLERS ----------
 async def pending(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    # Only users with SubRole = "IT" and approved can access
     _, subrole = get_user_role(user_id)
     if not (is_user_approved(user_id) and subrole == "IT"):
         await update.message.reply_text("Only IT users can view pending registrations.")
@@ -298,7 +292,6 @@ async def pending(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("No pending registrations.")
         return
 
-    # Send each pending registration with inline buttons
     for idx, row in pending_users:
         name = row.get("Name")
         role_group = row.get("RoleGroup")
@@ -325,17 +318,16 @@ async def approval_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     parts = data.split("_")
     action = parts[0]
     target_id = int(parts[1])
-    row_index = int(parts[2])  # row number in the sheet
+    row_index = int(parts[2])
 
     if action == "approve":
-        # Update the specific row
-        users_sheet.update(f"F{row_index}", "approved")
-        users_sheet.update(f"H{row_index}", str(update.effective_user.id))
-        users_sheet.update(f"I{row_index}", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+        users_sheet.update_cell(row_index, 6, "approved")   # Column F = ApprovalStatus
+        users_sheet.update_cell(row_index, 8, str(update.effective_user.id))  # Column H = ApprovedBy
+        users_sheet.update_cell(row_index, 9, datetime.now().strftime("%Y-%m-%d %H:%M:%S"))  # Column I = ApprovedAt
         await context.bot.send_message(chat_id=target_id, text="Your registration has been approved! You can now use /start to check orders.")
         await query.edit_message_text(f"✅ User {target_id} approved.")
     elif action == "reject":
-        users_sheet.update(f"F{row_index}", "rejected")
+        users_sheet.update_cell(row_index, 6, "rejected")
         await context.bot.send_message(chat_id=target_id, text="Your registration was rejected. You can try /register again.")
         await query.edit_message_text(f"❌ User {target_id} rejected.")
 
