@@ -150,6 +150,55 @@ def notify_approver(bot, user_id, name, role_group, subrole, wok="", sfid=""):
         text += f"\nUser ID: {user_id}"
         bot.send_message(chat_id=IT_TELEGRAM_ID, text=text, reply_markup=keyboard)
 
+# ---------- WELCOME/GUIDE MESSAGES ----------
+async def send_welcome_message(update_or_context, user_id, is_new_approval=False):
+    """Send tailored welcome message based on user's role. Can be called from approval or from /guide command."""
+    role_group, subrole = get_user_role(user_id)
+    if not role_group:
+        # Not registered yet
+        text = (
+            "📖 *Selamat Datang di Bot Cek Order SF Branch Manado*\n\n"
+            "Anda belum terdaftar. Silakan gunakan perintah /register untuk memulai pendaftaran.\n\n"
+            "Setelah mendaftar, Anda harus menunggu persetujuan dari IT. Anda akan diberi tahu setelah disetujui.\n\n"
+            "Jika Anda sudah terdaftar dan disetujui, gunakan /start untuk memeriksa Order ID.\n\n"
+            "Untuk bantuan lebih lanjut, ketik /help."
+        )
+        if isinstance(update_or_context, Update):
+            await update_or_context.message.reply_text(text, parse_mode="Markdown")
+        else:
+            await update_or_context.send_message(chat_id=user_id, text=text, parse_mode="Markdown")
+        return
+
+    # Approved user
+    if subrole in ["Manager", "Supervisor", "HSA", "IT"]:
+        text = (
+            f"📋 *Panduan Penggunaan Bot*\n\n"
+            f"✅ Anda terdaftar sebagai {role_group} - {subrole}.\n\n"
+            "🔍 *Cek Order:*\n"
+            "Gunakan /start lalu masukkan Order ID.\n\n"
+            "📊 *Laporan Penggunaan:*\n"
+            "• `/report day` → laporan hari ini (teks)\n"
+            "• `/report week` → laporan minggu ini (teks)\n"
+            "• `/report month` → laporan bulan ini (file CSV)\n"
+            "• `/report 2026-04-01 2026-04-10` → laporan rentang tanggal (file CSV)\n\n"
+            "📎 File CSV dapat diunduh dan dibuka di Excel atau Google Sheets.\n\n"
+            "Untuk daftar perintah lengkap, ketik /help."
+        )
+    else:
+        text = (
+            f"📋 *Panduan Penggunaan Bot*\n\n"
+            f"✅ Anda terdaftar sebagai {role_group} - {subrole}.\n\n"
+            "🔍 *Cek Order:*\n"
+            "Gunakan /start lalu masukkan Order ID.\n\n"
+            "📊 *Laporan:*\n"
+            "Laporan hanya tersedia untuk Supervisor, Manager, HSA, dan IT.\n\n"
+            "Untuk daftar perintah lengkap, ketik /help."
+        )
+    if isinstance(update_or_context, Update):
+        await update_or_context.message.reply_text(text, parse_mode="Markdown")
+    else:
+        await update_or_context.send_message(chat_id=user_id, text=text, parse_mode="Markdown")
+
 # ---------- REGISTRATION FLOW ----------
 async def register_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -321,10 +370,12 @@ async def approval_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     row_index = int(parts[2])
 
     if action == "approve":
-        users_sheet.update_cell(row_index, 6, "approved")   # Column F = ApprovalStatus
-        users_sheet.update_cell(row_index, 8, str(update.effective_user.id))  # Column H = ApprovedBy
-        users_sheet.update_cell(row_index, 9, datetime.now().strftime("%Y-%m-%d %H:%M:%S"))  # Column I = ApprovedAt
+        users_sheet.update_cell(row_index, 6, "approved")   # Column F
+        users_sheet.update_cell(row_index, 8, str(update.effective_user.id))  # Column H
+        users_sheet.update_cell(row_index, 9, datetime.now().strftime("%Y-%m-%d %H:%M:%S"))  # Column I
         await context.bot.send_message(chat_id=target_id, text="Your registration has been approved! You can now use /start to check orders.")
+        # Send tailored welcome message after approval
+        await send_welcome_message(context.bot, target_id, is_new_approval=True)
         await query.edit_message_text(f"✅ User {target_id} approved.")
     elif action == "reject":
         users_sheet.update_cell(row_index, 6, "rejected")
@@ -407,8 +458,17 @@ async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if not is_user_approved(user_id):
-        await update.message.reply_text("You are not registered or not approved. Please use /register to register.")
+        # Not registered or not approved: show registration guide
+        guide = (
+            "📖 *Selamat Datang di Bot Cek Order SF Branch Manado*\n\n"
+            "Anda belum terdaftar. Silakan gunakan perintah /register untuk memulai pendaftaran.\n\n"
+            "Setelah mendaftar, Anda harus menunggu persetujuan dari IT. Anda akan diberi tahu setelah disetujui.\n\n"
+            "Untuk bantuan lebih lanjut, ketik /help."
+        )
+        await update.message.reply_text(guide, parse_mode="Markdown")
         return
+
+    # Registered and approved: normal order lookup prompt
     text = "Semangat Pagi, Masukan Order ID\nContoh: AOs326032509275620607db90"
     await update.message.reply_text(text)
     return WAITING_FOR_ORDER_ID
@@ -457,15 +517,22 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "📖 *Daftar Perintah Bot*\n\n"
         "/register - Memulai proses registrasi pengguna baru (semua role)\n"
         "/start - Memeriksa Order ID (hanya untuk pengguna terdaftar & disetujui)\n"
+        "/guide - Menampilkan panduan penggunaan sesuai role Anda\n"
         "/pending - Melihat dan menyetujui/menolak registrasi (khusus IT)\n"
         "/report [day|week|month|YYYY-MM-DD YYYY-MM-DD] - Laporan penggunaan (untuk Manager, SPV, HSA, IT)\n"
         "/ping - Tes koneksi bot\n"
         "/help - Menampilkan pesan bantuan ini\n\n"
         "📌 *Catatan:*\n"
+        "- Semua registrasi memerlukan persetujuan IT.\n"
         "- Hanya Agency yang diminta WOK dan SF ID. Branch dan Technician tidak perlu.\n"
         "- Laporan harian/mingguan ditampilkan sebagai teks, laporan bulanan/custom sebagai file CSV."
     )
     await update.message.reply_text(help_text, parse_mode="Markdown")
+
+async def guide_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Send tailored welcome/guide message based on user's registration status and role."""
+    user_id = update.effective_user.id
+    await send_welcome_message(update, user_id)
 
 # ---------- MAIN ----------
 def main():
@@ -505,6 +572,7 @@ def main():
     app.add_handler(CommandHandler("report", report))
     app.add_handler(CommandHandler("ping", ping))
     app.add_handler(CommandHandler("help", help_command))
+    app.add_handler(CommandHandler("guide", guide_command))
 
     # Order lookup conversation
     order_conv = ConversationHandler(
