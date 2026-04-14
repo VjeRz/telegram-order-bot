@@ -159,7 +159,7 @@ async def send_welcome_message(update_or_context, user_id, is_new_approval=False
         text = (
             "📖 *Selamat Datang di Bot Cek Order SF Branch Manado*\n\n"
             "Anda belum terdaftar. Silakan gunakan perintah /register untuk memulai pendaftaran.\n\n"
-            "Setelah mendaftar, Anda harus menunggu persetujuan dari IT. Anda akan diberi tahu setelah disetujui.\n\n"
+            "Setelah mendaftar, Anda harus menunggu persetujuan dari Branch. Anda akan diberi tahu setelah disetujui.\n\n"
             "Jika Anda sudah terdaftar dan disetujui, gunakan /start untuk memeriksa Order ID.\n\n"
             "Untuk bantuan lebih lanjut, ketik /help."
         )
@@ -462,7 +462,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         guide = (
             "📖 *Selamat Datang di Bot Cek Order SF Branch Manado*\n\n"
             "Anda belum terdaftar. Silakan gunakan perintah /register untuk memulai pendaftaran.\n\n"
-            "Setelah mendaftar, Anda harus menunggu persetujuan dari IT. Anda akan diberi tahu setelah disetujui.\n\n"
+            "Setelah mendaftar, Anda harus menunggu persetujuan dari Branch. Anda akan diberi tahu setelah disetujui.\n\n"
             "Untuk bantuan lebih lanjut, ketik /help."
         )
         await update.message.reply_text(guide, parse_mode="Markdown")
@@ -518,7 +518,6 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/register - Memulai proses registrasi pengguna baru (semua role)\n"
         "/start - Memeriksa Order ID (hanya untuk pengguna terdaftar & disetujui)\n"
         "/guide - Menampilkan panduan penggunaan sesuai role Anda\n"
-        "/pending - Melihat dan menyetujui/menolak registrasi (khusus IT)\n"
         "/report [day|week|month|YYYY-MM-DD YYYY-MM-DD] - Laporan penggunaan (untuk Manager, SPV, HSA, IT)\n"
         "/ping - Tes koneksi bot\n"
         "/help - Menampilkan pesan bantuan ini\n\n"
