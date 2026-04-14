@@ -457,7 +457,6 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/help - Menampilkan pesan bantuan ini\n\n"
         "📌 *Catatan:*\n"
         "- Registrasi untuk Agency dan Technician memerlukan persetujuan IT.\n"
-        "- Branch (Inputters, Supervisor, Manager, IT) langsung disetujui.\n"
         "- Hanya Agency yang diminta WOK dan SF ID. Branch dan Technician tidak perlu.\n"
         "- Laporan harian/mingguan ditampilkan sebagai teks, laporan bulanan/custom sebagai file CSV."
     )
