@@ -39,6 +39,36 @@ SALES_WOK = 10
 SALES_CHANNEL = 11
 SALES_MONTH = 12
 
+# Predefined list of all possible order statuses (based on provided list)
+ALL_STATUSES = [
+    "PENDING_CUSTOMER_VERIFICATION",
+    "PROVISION_START",
+    "TECH_ASSIGNED",
+    "PENDING_APPOINTMENT_CREATION",
+    "PENDING_CONTRACT_APPROVAL",
+    "PROVISION_ISSUED",
+    "COMPLETED",
+    "OSS_TESTING_SERVICE",
+    "RE",
+    "FALLOUT",
+    "ODP_AVAILABLE",
+    "CANCELLED",
+    "PENDING_PAYMENT_FOLLOWUP",
+    "PAYMENT_INPROGRESS",
+    "CANCEL_OSM_COMPLETED",
+    "TSEL_ACTIVATION_FALLOUT",
+    "CANCEL_ORDER_INPROGRESS",
+    "TECH_ARRIVED",
+    "CANCELLED_SLA",
+    "PENDING_DUNNING_PAYMENT_FOLLOWUP",
+    "PENDING_PAYMENT",
+    "TECH_PICKED_UP",
+    "TECH_ON_THE_WAY",
+    "CONTRACT_APPROVED",
+    "WIRELESS_FULFILMENT_INPROGRESS",
+    "PROVISION_DESIGN"
+]
+
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
 )
@@ -134,7 +164,6 @@ def can_view_reports(telegram_id):
 
 def can_view_sales_report(telegram_id):
     _, subrole = get_user_role(telegram_id)
-    # Allow IT and Managers for testing, plus Supervisor and Team Leader
     return subrole in ["Supervisor", "Team Leader", "IT", "Manager"]
 
 def log_usage(telegram_id, order_id):
@@ -426,7 +455,6 @@ async def sales_wok_selected(update: Update, context: ContextTypes.DEFAULT_TYPE)
     context.user_data["report_subrole"] = subrole
 
     if subrole == "Team Leader":
-        # Team Leader: forced channel AGENCY, skip channel selection
         context.user_data["report_channel"] = "AGENCY"
         month_keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton("Januari", callback_data="month_1"),
@@ -492,6 +520,7 @@ async def sales_month_selected(update: Update, context: ContextTypes.DEFAULT_TYP
     channel = context.user_data["report_channel"]
     subrole = context.user_data["report_subrole"]
 
+    # Filter orders
     filtered = []
     for rec in records:
         rec_wok = rec.get("WOK", "")
@@ -500,8 +529,13 @@ async def sales_month_selected(update: Update, context: ContextTypes.DEFAULT_TYP
         if not rec_tanggal_input:
             continue
         try:
-            date_part = rec_tanggal_input.split()[0]
-            day, month, year = map(int, date_part.split('/'))
+            # Parse date from "YYYY-MM-DD HH:MM:SS" or "DD/MM/YYYY HH:MM"
+            if '-' in rec_tanggal_input:
+                date_part = rec_tanggal_input.split()[0]
+                year, month, day = map(int, date_part.split('-'))
+            else:
+                date_part = rec_tanggal_input.split()[0]
+                day, month, year = map(int, date_part.split('/'))
             if month == month_num and rec_wok == wok and rec_channel == channel:
                 filtered.append(rec)
         except:
@@ -510,6 +544,15 @@ async def sales_month_selected(update: Update, context: ContextTypes.DEFAULT_TYP
     if not filtered:
         await query.edit_message_text(f"Tidak ada data untuk WOK: {wok}, Channel: {channel}, Bulan: {month_name}.")
         return ConversationHandler.END
+
+    # Helper to format status counts
+    def format_status_counts(counts_dict):
+        # Only show statuses with count > 0
+        parts = []
+        for status in ALL_STATUSES:
+            if counts_dict.get(status, 0) > 0:
+                parts.append(f"{counts_dict[status]} {status}")
+        return ", ".join(parts)
 
     if channel == "AGENCY":
         # Per-salesperson breakdown
@@ -520,15 +563,20 @@ async def sales_month_selected(update: Update, context: ContextTypes.DEFAULT_TYP
                 continue
             status = rec.get("Status Order", "").upper()
             if sf not in sales_dict:
-                sales_dict[sf] = {"total": 0, "completed": 0, "fallout": 0, "cancelled": 0, "orders": []}
+                sales_dict[sf] = {"total": 0}
+                # Initialize all statuses to 0
+                for s in ALL_STATUSES:
+                    sales_dict[sf][s] = 0
+                sales_dict[sf]["orders"] = []
             sales_dict[sf]["total"] += 1
-            if status == "COMPLETED":
-                sales_dict[sf]["completed"] += 1
-            elif status == "FALLOUT":
-                sales_dict[sf]["fallout"] += 1
-            elif status == "CANCELLED":
-                sales_dict[sf]["cancelled"] += 1
-            if subrole == "Team Leader":  # Store order list only for Team Leader
+            # Increment specific status if recognized, otherwise "OTHER"
+            if status in sales_dict[sf]:
+                sales_dict[sf][status] += 1
+            else:
+                if "OTHER" not in sales_dict[sf]:
+                    sales_dict[sf]["OTHER"] = 0
+                sales_dict[sf]["OTHER"] += 1
+            if subrole == "Team Leader":
                 order_id = rec.get("Order ID", "")
                 sales_dict[sf]["orders"].append((order_id, status))
 
@@ -538,14 +586,17 @@ async def sales_month_selected(update: Update, context: ContextTypes.DEFAULT_TYP
                 result_lines.append(f"📢 Channel Name: {channel}")
                 result_lines.append(f"👩‍💼 SalesForce: {sf}")
                 result_lines.append(f"⌚️ Month: {month_name.upper()}")
-                completed = data["completed"]
-                cancelled = data["cancelled"]
-                fallout = data["fallout"]
-                result_lines.append(f"🚨 Total Input Orders: {data['total']} ({completed} COMPLETED, {fallout} FALLOUT, {cancelled} CANCELLED)")
+                status_summary = []
+                for s in ALL_STATUSES:
+                    if data.get(s, 0) > 0:
+                        status_summary.append(f"{data[s]} {s}")
+                if data.get("OTHER", 0) > 0:
+                    status_summary.append(f"{data['OTHER']} OTHER")
+                result_lines.append(f"🚨 Total Input Orders: {data['total']} ({', '.join(status_summary)})")
                 result_lines.append("📃 List of Orders:")
                 for oid, stat in data["orders"]:
                     result_lines.append(f"{oid} ({stat})")
-                result_lines.append("")  # empty line
+                result_lines.append("")
             if not result_lines:
                 await query.edit_message_text("Tidak ada data untuk filter ini.")
             else:
@@ -554,20 +605,36 @@ async def sales_month_selected(update: Update, context: ContextTypes.DEFAULT_TYP
             # Supervisor / IT / Manager view for AGENCY: per-salesperson summary without order list
             lines = [f"📢 *Channel Name:* {channel}", f"⌚️ *Month:* {month_name.upper()}", ""]
             for sf, data in sales_dict.items():
-                lines.append(f"👩‍💼 *{sf}*: {data['total']} order ({data['completed']} Completed, {data['fallout']} Fallout, {data['cancelled']} Cancelled)")
+                status_summary = []
+                for s in ALL_STATUSES:
+                    if data.get(s, 0) > 0:
+                        status_summary.append(f"{data[s]} {s}")
+                if data.get("OTHER", 0) > 0:
+                    status_summary.append(f"{data['OTHER']} OTHER")
+                lines.append(f"👩‍💼 *{sf}*: {data['total']} order ({', '.join(status_summary)})")
             await query.edit_message_text("\n".join(lines), parse_mode="Markdown")
     else:
         # Non-AGENCY channels: aggregated totals by status
-        status_counts = {"COMPLETED": 0, "FALLOUT": 0, "CANCELLED": 0}
+        status_counts = {s: 0 for s in ALL_STATUSES}
+        status_counts["OTHER"] = 0
+        total = 0
         for rec in filtered:
+            total += 1
             status = rec.get("Status Order", "").upper()
             if status in status_counts:
                 status_counts[status] += 1
-        total = len(filtered)
+            else:
+                status_counts["OTHER"] += 1
+        status_summary = []
+        for s in ALL_STATUSES:
+            if status_counts[s] > 0:
+                status_summary.append(f"{status_counts[s]} {s}")
+        if status_counts["OTHER"] > 0:
+            status_summary.append(f"{status_counts['OTHER']} OTHER")
         reply = (
             f"📢 *Channel Name:* {channel}\n"
             f"⌚️ *Month:* {month_name.upper()}\n"
-            f"🚨 *Total Input Orders:* {total} ({status_counts['COMPLETED']} Completed, {status_counts['FALLOUT']} Fallout, {status_counts['CANCELLED']} Cancelled)"
+            f"🚨 *Total Input Orders:* {total} ({', '.join(status_summary)})"
         )
         await query.edit_message_text(reply, parse_mode="Markdown")
     return ConversationHandler.END
