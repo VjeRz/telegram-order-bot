@@ -35,6 +35,10 @@ REG_SUBROLE = 5
 REG_WOK = 6
 REG_SFID = 7
 
+SALES_WOK = 10
+SALES_CHANNEL = 11
+SALES_MONTH = 12
+
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
 )
@@ -77,25 +81,35 @@ def clean_text(s):
     s = re.sub(r'[\u200b\u00a0\u200c\u200d]', '', str(s))
     return s.strip()
 
+def get_order_sheet_records():
+    if not hasattr(get_order_sheet_records, "cache"):
+        get_order_sheet_records.cache = None
+        get_order_sheet_records.cache_time = None
+    now = datetime.now()
+    if get_order_sheet_records.cache is None or (now - get_order_sheet_records.cache_time).total_seconds() > 300:
+        get_order_sheet_records.cache = order_sheet.get_all_records()
+        get_order_sheet_records.cache_time = now
+    return get_order_sheet_records.cache
+
 def find_order_details(order_id: str):
-    clean_input = clean_text(order_id).lower()
-    records = order_sheet.get_all_records()
-    for record in records:
-        sheet_value = clean_text(record.get("Order ID", "")).lower()
-        if sheet_value == clean_input:
-            return {
-                "sto": record.get("STO", "-"),
-                "wok": record.get("WOK", "-"),
-                "order_status": record.get("Status Order", "N/A"),
-                "channel": record.get("Channel Name", "N/A"),
-                "fallout": record.get("Fallout Reason", "") or "(Blank)",
-                "salesforce": record.get("SalesForce", "N/A"),
-                "tanggal_complete": record.get("Tanggal Complete", "-"),
-                "tanggal_input": record.get("Tanggal Input", "-"),
-                "sub_error": record.get("Sub Error Code", "-"),
-                "technician_notes": record.get("Technician Notes", "-"),
-            }
-    return None
+    clean_input = clean_text(order_id)
+    try:
+        cell = order_sheet.find(clean_input, in_column=1)
+        row = order_sheet.row_values(cell.row)
+        return {
+            "sto": row[1] if len(row) > 1 else "-",
+            "wok": row[2] if len(row) > 2 else "-",
+            "order_status": row[3] if len(row) > 3 else "N/A",
+            "channel": row[4] if len(row) > 4 else "N/A",
+            "fallout": row[5] if len(row) > 5 else "(Blank)",
+            "salesforce": row[6] if len(row) > 6 else "N/A",
+            "tanggal_complete": row[7] if len(row) > 7 else "-",
+            "tanggal_input": row[8] if len(row) > 8 else "-",
+            "sub_error": row[9] if len(row) > 9 else "-",
+            "technician_notes": row[10] if len(row) > 10 else "-",
+        }
+    except gspread.exceptions.CellNotFound:
+        return None
 
 def get_last_update_time():
     return datetime.now().strftime("%d/%m/%Y")
@@ -117,6 +131,11 @@ def get_user_role(telegram_id):
 def can_view_reports(telegram_id):
     _, subrole = get_user_role(telegram_id)
     return subrole in ["Manager", "Supervisor", "HSA", "IT"]
+
+def can_view_sales_report(telegram_id):
+    _, subrole = get_user_role(telegram_id)
+    # Allow IT and Managers for testing, plus Supervisor and Team Leader
+    return subrole in ["Supervisor", "Team Leader", "IT", "Manager"]
 
 def log_usage(telegram_id, order_id):
     name, role_group, subrole = "", "", ""
@@ -152,14 +171,12 @@ def notify_approver(bot, user_id, name, role_group, subrole, wok="", sfid=""):
 
 # ---------- WELCOME/GUIDE MESSAGES ----------
 async def send_welcome_message(update_or_context, user_id, is_new_approval=False):
-    """Send tailored welcome message based on user's role. Can be called from approval or from /guide command."""
     role_group, subrole = get_user_role(user_id)
     if not role_group:
-        # Not registered yet
         text = (
             "📖 *Selamat Datang di Bot Cek Order SF Branch Manado*\n\n"
             "Anda belum terdaftar. Silakan gunakan perintah /register untuk memulai pendaftaran.\n\n"
-            "Setelah mendaftar, Anda harus menunggu persetujuan dari Branch. Anda akan diberi tahu setelah disetujui.\n\n"
+            "Setelah mendaftar, Anda harus menunggu persetujuan dari IT. Anda akan diberi tahu setelah disetujui.\n\n"
             "Jika Anda sudah terdaftar dan disetujui, gunakan /start untuk memeriksa Order ID.\n\n"
             "Untuk bantuan lebih lanjut, ketik /help."
         )
@@ -169,7 +186,6 @@ async def send_welcome_message(update_or_context, user_id, is_new_approval=False
             await update_or_context.send_message(chat_id=user_id, text=text, parse_mode="Markdown")
         return
 
-    # Approved user
     if subrole in ["Manager", "Supervisor", "HSA", "IT"]:
         text = (
             f"📋 *Panduan Penggunaan Bot*\n\n"
@@ -181,6 +197,8 @@ async def send_welcome_message(update_or_context, user_id, is_new_approval=False
             "• `/report week` → laporan minggu ini (teks)\n"
             "• `/report month` → laporan bulan ini (file CSV)\n"
             "• `/report 2026-04-01 2026-04-10` → laporan rentang tanggal (file CSV)\n\n"
+            "📈 *Laporan Performa Sales:*\n"
+            "• `/salesreport` → ikuti menu interaktif untuk memilih WOK, Channel, dan Bulan\n\n"
             "📎 File CSV dapat diunduh dan dibuka di Excel atau Google Sheets.\n\n"
             "Untuk daftar perintah lengkap, ketik /help."
         )
@@ -199,7 +217,7 @@ async def send_welcome_message(update_or_context, user_id, is_new_approval=False
     else:
         await update_or_context.send_message(chat_id=user_id, text=text, parse_mode="Markdown")
 
-# ---------- REGISTRATION FLOW ----------
+# ---------- REGISTRATION FLOW (unchanged) ----------
 async def register_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if is_user_approved(user_id):
@@ -245,7 +263,7 @@ async def reg_role_group(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("Manager", callback_data="sub_MGR")],
             [InlineKeyboardButton("IT", callback_data="sub_IT")]
         ])
-    else:  # Technician
+    else:
         keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton("Technician", callback_data="sub_TECH")],
             [InlineKeyboardButton("HSA", callback_data="sub_HSA")]
@@ -370,11 +388,10 @@ async def approval_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     row_index = int(parts[2])
 
     if action == "approve":
-        users_sheet.update_cell(row_index, 6, "approved")   # Column F
-        users_sheet.update_cell(row_index, 8, str(update.effective_user.id))  # Column H
-        users_sheet.update_cell(row_index, 9, datetime.now().strftime("%Y-%m-%d %H:%M:%S"))  # Column I
+        users_sheet.update_cell(row_index, 6, "approved")
+        users_sheet.update_cell(row_index, 8, str(update.effective_user.id))
+        users_sheet.update_cell(row_index, 9, datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
         await context.bot.send_message(chat_id=target_id, text="Your registration has been approved! You can now use /start to check orders.")
-        # Send tailored welcome message after approval
         await send_welcome_message(context.bot, target_id, is_new_approval=True)
         await query.edit_message_text(f"✅ User {target_id} approved.")
     elif action == "reject":
@@ -382,7 +399,184 @@ async def approval_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_message(chat_id=target_id, text="Your registration was rejected. You can try /register again.")
         await query.edit_message_text(f"❌ User {target_id} rejected.")
 
-# ---------- REPORT COMMAND ----------
+# ---------- SALES REPORT INTERACTIVE MENU ----------
+async def sales_report_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if not (is_user_approved(user_id) and can_view_sales_report(user_id)):
+        await update.message.reply_text("Hanya Supervisor, Team Leader, IT, dan Manager yang dapat melihat laporan performa sales.")
+        return ConversationHandler.END
+
+    wok_keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("MANADO TALAUD", callback_data="wok_MANADO TALAUD")],
+        [InlineKeyboardButton("BOLAANG MONGONDOW", callback_data="wok_BOLAANG MONGONDOW")],
+        [InlineKeyboardButton("GORONTALO - PAHUWATO", callback_data="wok_GORONTALO - PAHUWATO")],
+        [InlineKeyboardButton("BITUNG MINAHASA", callback_data="wok_BITUNG MINAHASA")]
+    ])
+    await update.message.reply_text("Pilih WOK:", reply_markup=wok_keyboard)
+    return SALES_WOK
+
+async def sales_wok_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    wok = query.data.split("_", 1)[1]
+    context.user_data["report_wok"] = wok
+
+    user_id = update.effective_user.id
+    _, subrole = get_user_role(user_id)
+    context.user_data["report_subrole"] = subrole
+
+    if subrole == "Team Leader":
+        # Team Leader: forced channel AGENCY, skip channel selection
+        context.user_data["report_channel"] = "AGENCY"
+        month_keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("Januari", callback_data="month_1"),
+             InlineKeyboardButton("Februari", callback_data="month_2"),
+             InlineKeyboardButton("Maret", callback_data="month_3")],
+            [InlineKeyboardButton("April", callback_data="month_4"),
+             InlineKeyboardButton("Mei", callback_data="month_5"),
+             InlineKeyboardButton("Juni", callback_data="month_6")],
+            [InlineKeyboardButton("Juli", callback_data="month_7"),
+             InlineKeyboardButton("Agustus", callback_data="month_8"),
+             InlineKeyboardButton("September", callback_data="month_9")],
+            [InlineKeyboardButton("Oktober", callback_data="month_10"),
+             InlineKeyboardButton("November", callback_data="month_11"),
+             InlineKeyboardButton("Desember", callback_data="month_12")]
+        ])
+        await query.edit_message_text("Pilih bulan:", reply_markup=month_keyboard)
+        return SALES_MONTH
+    else:
+        channel_keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("B2B2C&OTHERS", callback_data="chan_B2B2C&OTHERS")],
+            [InlineKeyboardButton("AGENCY", callback_data="chan_AGENCY")],
+            [InlineKeyboardButton("GRAPARI", callback_data="chan_GRAPARI")],
+            [InlineKeyboardButton("SOBI AFFILIATE", callback_data="chan_SOBI AFFILIATE")],
+            [InlineKeyboardButton("WEB&APP", callback_data="chan_WEB&APP")]
+        ])
+        await query.edit_message_text("Pilih Channel:", reply_markup=channel_keyboard)
+        return SALES_CHANNEL
+
+async def sales_channel_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    channel = query.data.split("_", 1)[1]
+    context.user_data["report_channel"] = channel
+    month_keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("Januari", callback_data="month_1"),
+         InlineKeyboardButton("Februari", callback_data="month_2"),
+         InlineKeyboardButton("Maret", callback_data="month_3")],
+        [InlineKeyboardButton("April", callback_data="month_4"),
+         InlineKeyboardButton("Mei", callback_data="month_5"),
+         InlineKeyboardButton("Juni", callback_data="month_6")],
+        [InlineKeyboardButton("Juli", callback_data="month_7"),
+         InlineKeyboardButton("Agustus", callback_data="month_8"),
+         InlineKeyboardButton("September", callback_data="month_9")],
+        [InlineKeyboardButton("Oktober", callback_data="month_10"),
+         InlineKeyboardButton("November", callback_data="month_11"),
+         InlineKeyboardButton("Desember", callback_data="month_12")]
+    ])
+    await query.edit_message_text("Pilih bulan:", reply_markup=month_keyboard)
+    return SALES_MONTH
+
+async def sales_month_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    month_num = int(query.data.split("_")[1])
+    month_names = ["Januari", "Februari", "Maret", "April", "Mei", "Juni",
+                   "Juli", "Agustus", "September", "Oktober", "November", "Desember"]
+    month_name = month_names[month_num - 1]
+    context.user_data["report_month"] = month_name
+    context.user_data["report_month_num"] = month_num
+
+    records = get_order_sheet_records()
+    wok = context.user_data["report_wok"]
+    channel = context.user_data["report_channel"]
+    subrole = context.user_data["report_subrole"]
+
+    filtered = []
+    for rec in records:
+        rec_wok = rec.get("WOK", "")
+        rec_channel = rec.get("Channel Name", "")
+        rec_tanggal_input = rec.get("Tanggal Input", "")
+        if not rec_tanggal_input:
+            continue
+        try:
+            date_part = rec_tanggal_input.split()[0]
+            day, month, year = map(int, date_part.split('/'))
+            if month == month_num and rec_wok == wok and rec_channel == channel:
+                filtered.append(rec)
+        except:
+            continue
+
+    if not filtered:
+        await query.edit_message_text(f"Tidak ada data untuk WOK: {wok}, Channel: {channel}, Bulan: {month_name}.")
+        return ConversationHandler.END
+
+    if channel == "AGENCY":
+        # Per-salesperson breakdown
+        sales_dict = {}
+        for rec in filtered:
+            sf = rec.get("SalesForce", "").strip()
+            if not sf:
+                continue
+            status = rec.get("Status Order", "").upper()
+            if sf not in sales_dict:
+                sales_dict[sf] = {"total": 0, "completed": 0, "fallout": 0, "cancelled": 0, "orders": []}
+            sales_dict[sf]["total"] += 1
+            if status == "COMPLETED":
+                sales_dict[sf]["completed"] += 1
+            elif status == "FALLOUT":
+                sales_dict[sf]["fallout"] += 1
+            elif status == "CANCELLED":
+                sales_dict[sf]["cancelled"] += 1
+            if subrole == "Team Leader":  # Store order list only for Team Leader
+                order_id = rec.get("Order ID", "")
+                sales_dict[sf]["orders"].append((order_id, status))
+
+        if subrole == "Team Leader":
+            result_lines = []
+            for sf, data in sales_dict.items():
+                result_lines.append(f"📢 Channel Name: {channel}")
+                result_lines.append(f"👩‍💼 SalesForce: {sf}")
+                result_lines.append(f"⌚️ Month: {month_name.upper()}")
+                completed = data["completed"]
+                cancelled = data["cancelled"]
+                fallout = data["fallout"]
+                result_lines.append(f"🚨 Total Input Orders: {data['total']} ({completed} COMPLETED, {fallout} FALLOUT, {cancelled} CANCELLED)")
+                result_lines.append("📃 List of Orders:")
+                for oid, stat in data["orders"]:
+                    result_lines.append(f"{oid} ({stat})")
+                result_lines.append("")  # empty line
+            if not result_lines:
+                await query.edit_message_text("Tidak ada data untuk filter ini.")
+            else:
+                await query.edit_message_text("\n".join(result_lines), parse_mode="Markdown")
+        else:
+            # Supervisor / IT / Manager view for AGENCY: per-salesperson summary without order list
+            lines = [f"📢 *Channel Name:* {channel}", f"⌚️ *Month:* {month_name.upper()}", ""]
+            for sf, data in sales_dict.items():
+                lines.append(f"👩‍💼 *{sf}*: {data['total']} order ({data['completed']} Completed, {data['fallout']} Fallout, {data['cancelled']} Cancelled)")
+            await query.edit_message_text("\n".join(lines), parse_mode="Markdown")
+    else:
+        # Non-AGENCY channels: aggregated totals by status
+        status_counts = {"COMPLETED": 0, "FALLOUT": 0, "CANCELLED": 0}
+        for rec in filtered:
+            status = rec.get("Status Order", "").upper()
+            if status in status_counts:
+                status_counts[status] += 1
+        total = len(filtered)
+        reply = (
+            f"📢 *Channel Name:* {channel}\n"
+            f"⌚️ *Month:* {month_name.upper()}\n"
+            f"🚨 *Total Input Orders:* {total} ({status_counts['COMPLETED']} Completed, {status_counts['FALLOUT']} Fallout, {status_counts['CANCELLED']} Cancelled)"
+        )
+        await query.edit_message_text(reply, parse_mode="Markdown")
+    return ConversationHandler.END
+
+async def sales_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Laporan dibatalkan.")
+    return ConversationHandler.END
+
+# ---------- USAGE REPORT (unchanged) ----------
 async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if not can_view_reports(user_id):
@@ -458,17 +652,15 @@ async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if not is_user_approved(user_id):
-        # Not registered or not approved: show registration guide
         guide = (
             "📖 *Selamat Datang di Bot Cek Order SF Branch Manado*\n\n"
             "Anda belum terdaftar. Silakan gunakan perintah /register untuk memulai pendaftaran.\n\n"
-            "Setelah mendaftar, Anda harus menunggu persetujuan dari Branch. Anda akan diberi tahu setelah disetujui.\n\n"
+            "Setelah mendaftar, Anda harus menunggu persetujuan dari IT. Anda akan diberi tahu setelah disetujui.\n\n"
             "Untuk bantuan lebih lanjut, ketik /help."
         )
         await update.message.reply_text(guide, parse_mode="Markdown")
         return
 
-    # Registered and approved: normal order lookup prompt
     text = "Semangat Pagi, Masukan Order ID\nContoh: AOs326032509275620607db90"
     await update.message.reply_text(text)
     return WAITING_FOR_ORDER_ID
@@ -518,20 +710,20 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/register - Memulai proses registrasi pengguna baru (semua role)\n"
         "/start - Memeriksa Order ID (hanya untuk pengguna terdaftar & disetujui)\n"
         "/guide - Menampilkan panduan penggunaan sesuai role Anda\n"
-        "/report [day|week|month|YYYY-MM-DD YYYY-MM-DD] - Laporan penggunaan (untuk Manager, SPV, HSA, IT)\n"
+        "/pending - Melihat dan menyetujui/menolak registrasi (khusus IT)\n"
+        "/report [day|week|month|YYYY-MM-DD YYYY-MM-DD] - Laporan penggunaan bot (untuk Manager, SPV, HSA, IT)\n"
+        "/salesreport - Laporan performa sales interaktif (untuk Supervisor, Team Leader, IT, Manager)\n"
         "/ping - Tes koneksi bot\n"
         "/help - Menampilkan pesan bantuan ini\n\n"
         "📌 *Catatan:*\n"
         "- Semua registrasi memerlukan persetujuan IT.\n"
-        "- Hanya Agency yang diminta WOK dan SF ID. Branch dan Technician tidak perlu.\n"
+        "- Hanya Agency yang diminta WOK dan SF ID.\n"
         "- Laporan harian/mingguan ditampilkan sebagai teks, laporan bulanan/custom sebagai file CSV."
     )
     await update.message.reply_text(help_text, parse_mode="Markdown")
 
 async def guide_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Send tailored welcome/guide message based on user's registration status and role."""
-    user_id = update.effective_user.id
-    await send_welcome_message(update, user_id)
+    await send_welcome_message(update, update.effective_user.id)
 
 # ---------- MAIN ----------
 def main():
@@ -569,6 +761,20 @@ def main():
     app.add_handler(CallbackQueryHandler(approval_callback, pattern="^(approve|reject)_"))
     app.add_handler(CommandHandler("pending", pending))
     app.add_handler(CommandHandler("report", report))
+
+    # Sales report conversation
+    sales_conv = ConversationHandler(
+        entry_points=[CommandHandler("salesreport", sales_report_start)],
+        states={
+            SALES_WOK: [CallbackQueryHandler(sales_wok_selected, pattern="^wok_")],
+            SALES_CHANNEL: [CallbackQueryHandler(sales_channel_selected, pattern="^chan_")],
+            SALES_MONTH: [CallbackQueryHandler(sales_month_selected, pattern="^month_")],
+        },
+        fallbacks=[CommandHandler("cancel", sales_cancel)],
+        allow_reentry=True,
+    )
+    app.add_handler(sales_conv)
+
     app.add_handler(CommandHandler("ping", ping))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("guide", guide_command))
