@@ -1,0 +1,82 @@
+========================================
+BOT CHANGELOG
+Cek Order SF Branch Manado
+========================================
+
+Version 1.0 - Initial Bot (April 4, 2026)
+-----------------------------------------
+- Basic Telegram bot with /start command.
+- Reads Order ID from Google Sheet.
+- Replies with: Order ID, Channel Name, SalesForce, Tanggal Submit, Status Order, Fallout Reason.
+- Simple conversation handler (no timeout).
+- No proxy – direct Telegram API.
+
+Version 1.1 - Cloudflare Proxy (April 4)
+----------------------------------------
+- Added Cloudflare Worker proxy to bypass Railway IP blocks.
+- Environment variable CLOUDFLARE_WORKER_URL.
+- Fixed Python 3.12 compatibility with runtime.txt.
+
+Version 1.2 - Case‑insensitive matching & cleaning (April 5)
+------------------------------------------------------------
+- Added clean_text() to remove invisible characters.
+- Made Order ID matching case‑insensitive (.lower()).
+- Removed Markdown parsing (plain text replies).
+- Fixed greeting to always "Semangat Pagi".
+
+Version 1.3 - Added STO & WOK to order reply (April 6)
+------------------------------------------------------
+- Order sheet now includes columns: STO, WOK.
+- Reply format updated with 📠 STO: and 🪪 WOK:.
+
+Version 2.0 - Registration & Approval System (April 10)
+-------------------------------------------------------
+- New command /register with multi‑step conversation.
+- Role groups: Agency, Branch, Technician.
+- Sub‑roles: Team Leader, Salesforce, Inputters, Supervisor, Manager, IT, Technician, HSA.
+- Registration data stored in Google Sheet "Bot_Data" (tabs: Users, UsageLog).
+- Branch auto‑approved; Agency/Technician pending.
+- IT approval via inline buttons (notifications to IT_TELEGRAM_ID).
+- New command /pending (IT only) to list pending registrations.
+- Usage logging: every order lookup recorded.
+- Reporting: /report day|week|month|custom (CSV for monthly/custom).
+- Report access: Manager, Supervisor, HSA, IT.
+
+Version 2.1 - Added WOK & SFID for Agency only (April 11)
+---------------------------------------------------------
+- During registration, only Agency group asked for WOK (4 areas) and SF ID.
+- Branch and Technician skip those fields.
+
+Version 2.2 - Fixed approval callback (April 14)
+------------------------------------------------
+- Replaced users_sheet.update() with update_cell() to fix API error.
+- approval_callback now uses row_index from /pending buttons.
+
+Version 2.3 - Welcome guides (April 14)
+---------------------------------------
+- New command /guide – shows tailored welcome message based on role.
+- After IT approves, user auto‑receives welcome message.
+- Updated /start: shows registration guide only for unregistered users.
+- For approved users, /start directly asks for Order ID (no extra guide).
+
+Version 2.4 - Performance fix (planned)
+---------------------------------------
+- Optimize find_order_details() with gspread.find() instead of get_all_records().
+- Recommended archiving of old orders (>3 months) to keep sheet fast.
+
+Current Features Summary (as of April 25, 2026)
+------------------------------------------------
+- /register – multi‑step registration with role selection, WOK/SFID (Agency only).
+- /start – Check Order ID (approved users only).
+- /guide – Role‑based usage instructions.
+- /pending – IT only, approve/reject pending registrations.
+- /report day|week|month|from to – Usage reports, CSV for large ranges.
+- /ping – Health check.
+- /help – List of commands.
+- Google Sheets integration: order sheet (65k rows) + Bot_Data (Users, UsageLog).
+- Cloudflare proxy for Railway.
+- All registration requires IT approval (no auto‑approval).
+
+========================================
+End of Changelog
+========================================
