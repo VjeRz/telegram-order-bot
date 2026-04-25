@@ -123,7 +123,10 @@ def get_order_sheet_records():
 def find_order_details(order_id: str):
     clean_input = clean_text(order_id)
     try:
+        # Try to find cell in column A (Order ID)
         cell = order_sheet.find(clean_input, in_column=1)
+        if cell is None:
+            return None
         row = order_sheet.row_values(cell.row)
         return {
             "sto": row[1] if len(row) > 1 else "-",
@@ -137,7 +140,8 @@ def find_order_details(order_id: str):
             "sub_error": row[9] if len(row) > 9 else "-",
             "technician_notes": row[10] if len(row) > 10 else "-",
         }
-    except gspread.exceptions.CellNotFound:
+    except Exception as e:
+        logger.error(f"Error finding order {clean_input}: {e}")
         return None
 
 def get_last_update_time():
@@ -202,50 +206,50 @@ async def send_welcome_message(update_or_context, user_id, is_new_approval=False
     role_group, subrole = get_user_role(user_id)
     if not role_group:
         text = (
-            "📖 *Selamat Datang di Bot Cek Order SF Branch Manado*\n\n"
+            "📖 Selamat Datang di Bot Cek Order SF Branch Manado\n\n"
             "Anda belum terdaftar. Silakan gunakan perintah /register untuk memulai pendaftaran.\n\n"
             "Setelah mendaftar, Anda harus menunggu persetujuan dari IT. Anda akan diberi tahu setelah disetujui.\n\n"
             "Jika Anda sudah terdaftar dan disetujui, gunakan /start untuk memeriksa Order ID.\n\n"
             "Untuk bantuan lebih lanjut, ketik /help."
         )
         if isinstance(update_or_context, Update):
-            await update_or_context.message.reply_text(text, parse_mode="Markdown")
+            await update_or_context.message.reply_text(text)
         else:
-            await update_or_context.send_message(chat_id=user_id, text=text, parse_mode="Markdown")
+            await update_or_context.send_message(chat_id=user_id, text=text)
         return
 
     if subrole in ["Manager", "Supervisor", "HSA", "IT"]:
         text = (
-            f"📋 *Panduan Penggunaan Bot*\n\n"
+            f"📋 Panduan Penggunaan Bot\n\n"
             f"✅ Anda terdaftar sebagai {role_group} - {subrole}.\n\n"
-            "🔍 *Cek Order:*\n"
+            "🔍 Cek Order:\n"
             "Gunakan /start lalu masukkan Order ID.\n\n"
-            "📊 *Laporan Penggunaan:*\n"
-            "• `/report day` → laporan hari ini (teks)\n"
-            "• `/report week` → laporan minggu ini (teks)\n"
-            "• `/report month` → laporan bulan ini (file CSV)\n"
-            "• `/report 2026-04-01 2026-04-10` → laporan rentang tanggal (file CSV)\n\n"
-            "📈 *Laporan Performa Sales:*\n"
-            "• `/salesreport` → ikuti menu interaktif untuk memilih WOK, Channel, dan Bulan\n\n"
+            "📊 Laporan Penggunaan:\n"
+            "• /report day → laporan hari ini (teks)\n"
+            "• /report week → laporan minggu ini (teks)\n"
+            "• /report month → laporan bulan ini (file CSV)\n"
+            "• /report 2026-04-01 2026-04-10 → laporan rentang tanggal (file CSV)\n\n"
+            "📈 Laporan Performa Sales:\n"
+            "• /salesreport → ikuti menu interaktif untuk memilih WOK, Channel, dan Bulan\n\n"
             "📎 File CSV dapat diunduh dan dibuka di Excel atau Google Sheets.\n\n"
             "Untuk daftar perintah lengkap, ketik /help."
         )
     else:
         text = (
-            f"📋 *Panduan Penggunaan Bot*\n\n"
+            f"📋 Panduan Penggunaan Bot\n\n"
             f"✅ Anda terdaftar sebagai {role_group} - {subrole}.\n\n"
-            "🔍 *Cek Order:*\n"
+            "🔍 Cek Order:\n"
             "Gunakan /start lalu masukkan Order ID.\n\n"
-            "📊 *Laporan:*\n"
+            "📊 Laporan:\n"
             "Laporan hanya tersedia untuk Supervisor, Manager, HSA, dan IT.\n\n"
             "Untuk daftar perintah lengkap, ketik /help."
         )
     if isinstance(update_or_context, Update):
-        await update_or_context.message.reply_text(text, parse_mode="Markdown")
+        await update_or_context.message.reply_text(text)
     else:
-        await update_or_context.send_message(chat_id=user_id, text=text, parse_mode="Markdown")
+        await update_or_context.send_message(chat_id=user_id, text=text)
 
-# ---------- REGISTRATION FLOW (unchanged) ----------
+# ---------- REGISTRATION FLOW (unchanged, but remove Markdown) ----------
 async def register_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if is_user_approved(user_id):
@@ -519,6 +523,7 @@ async def sales_month_selected(update: Update, context: ContextTypes.DEFAULT_TYP
     channel = context.user_data["report_channel"]
     subrole = context.user_data["report_subrole"]
 
+    # Filter orders
     filtered = []
     for rec in records:
         rec_wok = rec.get("WOK", "")
@@ -542,10 +547,12 @@ async def sales_month_selected(update: Update, context: ContextTypes.DEFAULT_TYP
         await query.edit_message_text(f"Tidak ada data untuk WOK: {wok}, Channel: {channel}, Bulan: {month_name}.")
         return ConversationHandler.END
 
+    # Delete the month selection message and send a processing message
     await query.delete_message()
     processing_msg = await query.message.reply_text("⏳ Sedang memproses data...")
 
     if channel == "AGENCY":
+        # Per-salesperson breakdown
         sales_dict = {}
         for rec in filtered:
             sf = rec.get("SalesForce", "").strip()
@@ -570,14 +577,14 @@ async def sales_month_selected(update: Update, context: ContextTypes.DEFAULT_TYP
 
         sorted_sf = sorted(sales_dict.items(), key=lambda x: x[1]["total"], reverse=True)
 
-        header = f"📢 *Channel:* {channel}\n📅 *Bulan:* {month_name.upper()}\n📍 *WOK:* {wok}"
-        await processing_msg.edit_text(header, parse_mode="Markdown")
+        header = f"📢 Channel: {channel}\n📅 Bulan: {month_name.upper()}\n📍 WOK: {wok}"
+        await processing_msg.edit_text(header)
 
         for sf, data in sorted_sf:
             if subrole == "Team Leader":
                 # Build the message for this salesperson
-                lines = [f"👤 *{sf}*"]
-                lines.append(f"   📦 *Total Order:* {data['total']}")
+                lines = [f"👤 {sf}"]
+                lines.append(f"   📦 Total Order: {data['total']}")
                 status_summary = []
                 for s in ALL_STATUSES:
                     count = data.get(s, 0)
@@ -591,33 +598,31 @@ async def sales_month_selected(update: Update, context: ContextTypes.DEFAULT_TYP
                 if data.get("OTHER", 0) > 0:
                     status_summary.append(f"❓ OTHER: {data['OTHER']}")
                 if status_summary:
-                    lines.append("   📊 *Status:*")
+                    lines.append("   📊 Status:")
                     for stat_line in status_summary:
                         lines.append(f"      {stat_line}")
-                lines.append("   🧾 *Daftar Order:*")
-                # Add orders line by line, but we may need to split if too long
+                lines.append("   🧾 Daftar Order:")
                 order_lines = []
                 for oid, stat in data["orders"]:
-                    order_lines.append(f"      • `{oid}` ({stat})")
+                    order_lines.append(f"      • {oid} ({stat})")
                 # Combine everything into one message; if total length > 4000, split order list into multiple messages
-                base_text = "\n".join(lines[:-1]) + "\n   🧾 *Daftar Order:*\n"
+                base_text = "\n".join(lines[:-1]) + "\n   🧾 Daftar Order:\n"
                 current_chunk = []
                 current_len = len(base_text) + 10
                 for order_line in order_lines:
                     if current_len + len(order_line) + 1 > 4000:
-                        # Send current chunk first
                         chunk_text = base_text + "\n".join(current_chunk)
-                        await query.message.reply_text(chunk_text, parse_mode="Markdown")
+                        await query.message.reply_text(chunk_text)
                         current_chunk = []
                         current_len = len(base_text) + 10
                     current_chunk.append(order_line)
                     current_len += len(order_line) + 1
                 if current_chunk:
                     chunk_text = base_text + "\n".join(current_chunk)
-                    await query.message.reply_text(chunk_text, parse_mode="Markdown")
+                    await query.message.reply_text(chunk_text)
             else:
-                lines = [f"👤 *{sf}*"]
-                lines.append(f"   🔢 *Total Order:* {data['total']}")
+                lines = [f"👤 {sf}"]
+                lines.append(f"   🔢 Total Order: {data['total']}")
                 status_summary = []
                 for s in ALL_STATUSES:
                     count = data.get(s, 0)
@@ -631,13 +636,14 @@ async def sales_month_selected(update: Update, context: ContextTypes.DEFAULT_TYP
                 if data.get("OTHER", 0) > 0:
                     status_summary.append(f"❓ OTHER: {data['OTHER']}")
                 if status_summary:
-                    lines.append("   📊 *Rincian Status:*")
+                    lines.append("   📊 Rincian Status:")
                     for stat_line in status_summary:
                         lines.append(f"      {stat_line}")
                 msg_text = "\n".join(lines)
-                await query.message.reply_text(msg_text, parse_mode="Markdown")
+                await query.message.reply_text(msg_text)
         await query.message.reply_text("✅ Selesai. Terima kasih.")
     else:
+        # Non-AGENCY channel: aggregated summary
         status_counts = {s: 0 for s in ALL_STATUSES}
         status_counts["OTHER"] = 0
         total = 0
@@ -648,9 +654,9 @@ async def sales_month_selected(update: Update, context: ContextTypes.DEFAULT_TYP
                 status_counts[status] += 1
             else:
                 status_counts["OTHER"] += 1
-        lines = [f"📢 *Channel:* {channel}", f"📅 *Bulan:* {month_name.upper()}", f"📍 *WOK:* {wok}", ""]
-        lines.append(f"📊 *Total Order:* {total}")
-        lines.append("🔍 *Rincian Status:*")
+        lines = [f"📢 Channel: {channel}", f"📅 Bulan: {month_name.upper()}", f"📍 WOK: {wok}", ""]
+        lines.append(f"📊 Total Order: {total}")
+        lines.append("🔍 Rincian Status:")
         for s in ALL_STATUSES:
             if status_counts[s] > 0:
                 if s == "COMPLETED":
@@ -661,14 +667,14 @@ async def sales_month_selected(update: Update, context: ContextTypes.DEFAULT_TYP
                     lines.append(f"   🔄 {s}: {status_counts[s]}")
         if status_counts["OTHER"] > 0:
             lines.append(f"   ❓ OTHER: {status_counts['OTHER']}")
-        await processing_msg.edit_text("\n".join(lines), parse_mode="Markdown")
+        await processing_msg.edit_text("\n".join(lines))
     return ConversationHandler.END
 
 async def sales_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Laporan dibatalkan.")
     return ConversationHandler.END
 
-# ---------- USAGE REPORT (unchanged) ----------
+# ---------- USAGE REPORT ----------
 async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if not can_view_reports(user_id):
@@ -745,12 +751,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if not is_user_approved(user_id):
         guide = (
-            "📖 *Selamat Datang di Bot Cek Order SF Branch Manado*\n\n"
+            "📖 Selamat Datang di Bot Cek Order SF Branch Manado\n\n"
             "Anda belum terdaftar. Silakan gunakan perintah /register untuk memulai pendaftaran.\n\n"
             "Setelah mendaftar, Anda harus menunggu persetujuan dari IT. Anda akan diberi tahu setelah disetujui.\n\n"
             "Untuk bantuan lebih lanjut, ketik /help."
         )
-        await update.message.reply_text(guide, parse_mode="Markdown")
+        await update.message.reply_text(guide)
         return
 
     text = "Semangat Pagi, Masukan Order ID\nContoh: AOs326032509275620607db90"
@@ -798,7 +804,7 @@ async def ping(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     help_text = (
-        "📖 *Daftar Perintah Bot*\n\n"
+        "📖 Daftar Perintah Bot\n\n"
         "/register - Memulai proses registrasi pengguna baru (semua role)\n"
         "/start - Memeriksa Order ID (hanya untuk pengguna terdaftar & disetujui)\n"
         "/guide - Menampilkan panduan penggunaan sesuai role Anda\n"
@@ -807,12 +813,12 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/salesreport - Laporan performa sales interaktif (untuk Supervisor, Team Leader, IT, Manager)\n"
         "/ping - Tes koneksi bot\n"
         "/help - Menampilkan pesan bantuan ini\n\n"
-        "📌 *Catatan:*\n"
+        "📌 Catatan:\n"
         "- Semua registrasi memerlukan persetujuan IT.\n"
         "- Hanya Agency yang diminta WOK dan SF ID.\n"
         "- Laporan harian/mingguan ditampilkan sebagai teks, laporan bulanan/custom sebagai file CSV."
     )
-    await update.message.reply_text(help_text, parse_mode="Markdown")
+    await update.message.reply_text(help_text)
 
 async def guide_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await send_welcome_message(update, update.effective_user.id)
