@@ -123,7 +123,6 @@ def get_order_sheet_records():
 def find_order_details(order_id: str):
     clean_input = clean_text(order_id)
     try:
-        # Try to find cell in column A (Order ID)
         cell = order_sheet.find(clean_input, in_column=1)
         if cell is None:
             return None
@@ -224,6 +223,8 @@ async def send_welcome_message(update_or_context, user_id, is_new_approval=False
             f"✅ Anda terdaftar sebagai {role_group} - {subrole}.\n\n"
             "🔍 Cek Order:\n"
             "Gunakan /start lalu masukkan Order ID.\n\n"
+            "📦 Cek Bulk Order:\n"
+            "Gunakan /bulk lalu masukkan beberapa Order ID dipisah spasi atau baris baru.\n\n"
             "📊 Laporan Penggunaan:\n"
             "• /report day → laporan hari ini (teks)\n"
             "• /report week → laporan minggu ini (teks)\n"
@@ -240,6 +241,8 @@ async def send_welcome_message(update_or_context, user_id, is_new_approval=False
             f"✅ Anda terdaftar sebagai {role_group} - {subrole}.\n\n"
             "🔍 Cek Order:\n"
             "Gunakan /start lalu masukkan Order ID.\n\n"
+            "📦 Cek Bulk Order:\n"
+            "Gunakan /bulk lalu masukkan beberapa Order ID dipisah spasi atau baris baru.\n\n"
             "📊 Laporan:\n"
             "Laporan hanya tersedia untuk Supervisor, Manager, HSA, dan IT.\n\n"
             "Untuk daftar perintah lengkap, ketik /help."
@@ -249,7 +252,7 @@ async def send_welcome_message(update_or_context, user_id, is_new_approval=False
     else:
         await update_or_context.send_message(chat_id=user_id, text=text)
 
-# ---------- REGISTRATION FLOW (unchanged, but remove Markdown) ----------
+# ---------- REGISTRATION FLOW ----------
 async def register_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if is_user_approved(user_id):
@@ -431,6 +434,69 @@ async def approval_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_message(chat_id=target_id, text="Your registration was rejected. You can try /register again.")
         await query.edit_message_text(f"❌ User {target_id} rejected.")
 
+# ---------- BULK ORDER CHECK ----------
+async def bulk_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if not is_user_approved(user_id):
+        await update.message.reply_text("Anda belum terdaftar atau belum disetujui. Silakan gunakan /register terlebih dahulu.")
+        return
+    await update.message.reply_text(
+        "📦 *Cek Bulk Order*\n\n"
+        "Kirimkan beberapa Order ID dalam satu pesan.\n"
+        "Pisahkan dengan spasi atau baris baru.\n\n"
+        "Contoh:\n"
+        "`AOi426042509434427179f980 AOi4260425091936300715b70`\n\n"
+        "atau:\n"
+        "`AOi426042509434427179f980`\n`AOi4260425091936300715b70`\n\n"
+        "Bot akan membalas detail masing-masing Order ID secara terpisah.",
+        parse_mode="Markdown"
+    )
+    return
+
+async def bulk_process(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    raw_text = update.message.text
+    # Split by whitespace (spaces, newlines, tabs)
+    order_ids = re.split(r'\s+', raw_text.strip())
+    order_ids = [oid for oid in order_ids if oid]  # remove empty strings
+
+    if not order_ids:
+        await update.message.reply_text("Tidak ada Order ID yang ditemukan. Kirim ulang dengan format yang benar.")
+        return
+
+    await update.message.reply_text(f"⏳ Memproses {len(order_ids)} Order ID...")
+
+    found_count = 0
+    not_found = []
+    for oid in order_ids:
+        clean_oid = clean_text(oid)
+        data = find_order_details(clean_oid)
+        if data is None:
+            not_found.append(clean_oid)
+            continue
+        found_count += 1
+        log_usage(user_id, clean_oid)
+        reply = (
+            f"✅ Order ID: {clean_oid}\n"
+            f"📠 STO: {data['sto']}\n"
+            f"🪪 WOK: {data['wok']}\n"
+            f"⚙️ Order Status: {data['order_status']}\n"
+            f"📢 Channel Name: {data['channel']}\n"
+            f"⚠️ Fallout Reason: {data['fallout']}\n"
+            f"👤 Salesforce: {data['salesforce']}\n"
+            f"📅 Tanggal Complete: {data['tanggal_complete']}\n"
+            f"📅 Tanggal Input: {data['tanggal_input']}\n"
+            f"🧠 Sub Error Code: {data['sub_error']}\n"
+            f"👨🏼‍🔧 Technician Notes: {data['technician_notes']}"
+        )
+        await update.message.reply_text(reply)
+
+    if not_found:
+        not_found_msg = "❌ Order ID tidak ditemukan:\n" + "\n".join(not_found)
+        await update.message.reply_text(not_found_msg)
+
+    await update.message.reply_text(f"✅ Selesai. {found_count} dari {len(order_ids)} Order ID berhasil ditemukan.")
+
 # ---------- SALES REPORT INTERACTIVE MENU ----------
 async def sales_report_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -523,7 +589,6 @@ async def sales_month_selected(update: Update, context: ContextTypes.DEFAULT_TYP
     channel = context.user_data["report_channel"]
     subrole = context.user_data["report_subrole"]
 
-    # Filter orders
     filtered = []
     for rec in records:
         rec_wok = rec.get("WOK", "")
@@ -547,12 +612,10 @@ async def sales_month_selected(update: Update, context: ContextTypes.DEFAULT_TYP
         await query.edit_message_text(f"Tidak ada data untuk WOK: {wok}, Channel: {channel}, Bulan: {month_name}.")
         return ConversationHandler.END
 
-    # Delete the month selection message and send a processing message
     await query.delete_message()
     processing_msg = await query.message.reply_text("⏳ Sedang memproses data...")
 
     if channel == "AGENCY":
-        # Per-salesperson breakdown
         sales_dict = {}
         for rec in filtered:
             sf = rec.get("SalesForce", "").strip()
@@ -582,7 +645,6 @@ async def sales_month_selected(update: Update, context: ContextTypes.DEFAULT_TYP
 
         for sf, data in sorted_sf:
             if subrole == "Team Leader":
-                # Build the message for this salesperson
                 lines = [f"👤 {sf}"]
                 lines.append(f"   📦 Total Order: {data['total']}")
                 status_summary = []
@@ -605,7 +667,6 @@ async def sales_month_selected(update: Update, context: ContextTypes.DEFAULT_TYP
                 order_lines = []
                 for oid, stat in data["orders"]:
                     order_lines.append(f"      • {oid} ({stat})")
-                # Combine everything into one message; if total length > 4000, split order list into multiple messages
                 base_text = "\n".join(lines[:-1]) + "\n   🧾 Daftar Order:\n"
                 current_chunk = []
                 current_len = len(base_text) + 10
@@ -643,7 +704,6 @@ async def sales_month_selected(update: Update, context: ContextTypes.DEFAULT_TYP
                 await query.message.reply_text(msg_text)
         await query.message.reply_text("✅ Selesai. Terima kasih.")
     else:
-        # Non-AGENCY channel: aggregated summary
         status_counts = {s: 0 for s in ALL_STATUSES}
         status_counts["OTHER"] = 0
         total = 0
@@ -746,7 +806,7 @@ async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
             lines.append(f"👤 {data['name']} ({data['role']}) - {data['count']} lookups - Duration: {duration:.0f} min")
         await update.message.reply_text("\n".join(lines))
 
-# ---------- ORDER LOOKUP ----------
+# ---------- ORDER LOOKUP (SINGLE) ----------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if not is_user_approved(user_id):
@@ -806,7 +866,8 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     help_text = (
         "📖 Daftar Perintah Bot\n\n"
         "/register - Memulai proses registrasi pengguna baru (semua role)\n"
-        "/start - Memeriksa Order ID (hanya untuk pengguna terdaftar & disetujui)\n"
+        "/start - Memeriksa Order ID (satu per satu)\n"
+        "/bulk - Memeriksa beberapa Order ID sekaligus (dipisah spasi atau baris baru)\n"
         "/guide - Menampilkan panduan penggunaan sesuai role Anda\n"
         "/pending - Melihat dan menyetujui/menolak registrasi (khusus IT)\n"
         "/report [day|week|month|YYYY-MM-DD YYYY-MM-DD] - Laporan penggunaan bot (untuk Manager, SPV, HSA, IT)\n"
@@ -875,6 +936,7 @@ def main():
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("guide", guide_command))
 
+    # Single order lookup conversation
     order_conv = ConversationHandler(
         entry_points=[CommandHandler("start", start)],
         states={WAITING_FOR_ORDER_ID: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_order_id)]},
@@ -882,6 +944,10 @@ def main():
         allow_reentry=True,
     )
     app.add_handler(order_conv)
+
+    # Bulk order command (no conversation, just process and reply)
+    app.add_handler(CommandHandler("bulk", bulk_start))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, bulk_process))
 
     logger.info("Bot is polling...")
     app.run_polling()
