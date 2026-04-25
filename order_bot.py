@@ -39,7 +39,6 @@ SALES_WOK = 10
 SALES_CHANNEL = 11
 SALES_MONTH = 12
 
-# Predefined list of all possible order statuses
 ALL_STATUSES = [
     "PENDING_CUSTOMER_VERIFICATION",
     "PROVISION_START",
@@ -246,7 +245,7 @@ async def send_welcome_message(update_or_context, user_id, is_new_approval=False
     else:
         await update_or_context.send_message(chat_id=user_id, text=text, parse_mode="Markdown")
 
-# ---------- REGISTRATION FLOW ----------
+# ---------- REGISTRATION FLOW (unchanged) ----------
 async def register_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if is_user_approved(user_id):
@@ -520,7 +519,6 @@ async def sales_month_selected(update: Update, context: ContextTypes.DEFAULT_TYP
     channel = context.user_data["report_channel"]
     subrole = context.user_data["report_subrole"]
 
-    # Filter orders
     filtered = []
     for rec in records:
         rec_wok = rec.get("WOK", "")
@@ -544,8 +542,10 @@ async def sales_month_selected(update: Update, context: ContextTypes.DEFAULT_TYP
         await query.edit_message_text(f"Tidak ada data untuk WOK: {wok}, Channel: {channel}, Bulan: {month_name}.")
         return ConversationHandler.END
 
+    await query.delete_message()
+    processing_msg = await query.message.reply_text("⏳ Sedang memproses data...")
+
     if channel == "AGENCY":
-        # Per-salesperson breakdown
         sales_dict = {}
         for rec in filtered:
             sf = rec.get("SalesForce", "").strip()
@@ -568,12 +568,15 @@ async def sales_month_selected(update: Update, context: ContextTypes.DEFAULT_TYP
                 order_id = rec.get("Order ID", "")
                 sales_dict[sf]["orders"].append((order_id, status))
 
-        if subrole == "Team Leader":
-            result_lines = []
-            sorted_sf = sorted(sales_dict.items(), key=lambda x: x[1]["total"], reverse=True)
-            for sf, data in sorted_sf:
-                lines = []
-                lines.append(f"👤 *{sf}*")
+        sorted_sf = sorted(sales_dict.items(), key=lambda x: x[1]["total"], reverse=True)
+
+        header = f"📢 *Channel:* {channel}\n📅 *Bulan:* {month_name.upper()}\n📍 *WOK:* {wok}"
+        await processing_msg.edit_text(header, parse_mode="Markdown")
+
+        for sf, data in sorted_sf:
+            if subrole == "Team Leader":
+                # Build the message for this salesperson
+                lines = [f"👤 *{sf}*"]
                 lines.append(f"   📦 *Total Order:* {data['total']}")
                 status_summary = []
                 for s in ALL_STATUSES:
@@ -592,19 +595,28 @@ async def sales_month_selected(update: Update, context: ContextTypes.DEFAULT_TYP
                     for stat_line in status_summary:
                         lines.append(f"      {stat_line}")
                 lines.append("   🧾 *Daftar Order:*")
+                # Add orders line by line, but we may need to split if too long
+                order_lines = []
                 for oid, stat in data["orders"]:
-                    lines.append(f"      • `{oid}` ({stat})")
-                result_lines.append("\n".join(lines))
-            if not result_lines:
-                await query.edit_message_text("Tidak ada data untuk filter ini.")
+                    order_lines.append(f"      • `{oid}` ({stat})")
+                # Combine everything into one message; if total length > 4000, split order list into multiple messages
+                base_text = "\n".join(lines[:-1]) + "\n   🧾 *Daftar Order:*\n"
+                current_chunk = []
+                current_len = len(base_text) + 10
+                for order_line in order_lines:
+                    if current_len + len(order_line) + 1 > 4000:
+                        # Send current chunk first
+                        chunk_text = base_text + "\n".join(current_chunk)
+                        await query.message.reply_text(chunk_text, parse_mode="Markdown")
+                        current_chunk = []
+                        current_len = len(base_text) + 10
+                    current_chunk.append(order_line)
+                    current_len += len(order_line) + 1
+                if current_chunk:
+                    chunk_text = base_text + "\n".join(current_chunk)
+                    await query.message.reply_text(chunk_text, parse_mode="Markdown")
             else:
-                await query.edit_message_text("\n\n".join(result_lines), parse_mode="Markdown")
-        else:
-            # Supervisor / IT / Manager view for AGENCY
-            lines = [f"📢 *Channel:* {channel}", f"📅 *Bulan:* {month_name.upper()}", f"📍 *WOK:* {wok}", ""]
-            sorted_sf = sorted(sales_dict.items(), key=lambda x: x[1]["total"], reverse=True)
-            for sf, data in sorted_sf:
-                lines.append(f"👤 *{sf}*")
+                lines = [f"👤 *{sf}*"]
                 lines.append(f"   🔢 *Total Order:* {data['total']}")
                 status_summary = []
                 for s in ALL_STATUSES:
@@ -622,13 +634,10 @@ async def sales_month_selected(update: Update, context: ContextTypes.DEFAULT_TYP
                     lines.append("   📊 *Rincian Status:*")
                     for stat_line in status_summary:
                         lines.append(f"      {stat_line}")
-                lines.append("")
-            if not lines:
-                await query.edit_message_text("Tidak ada data untuk filter ini.")
-            else:
-                await query.edit_message_text("\n".join(lines), parse_mode="Markdown")
+                msg_text = "\n".join(lines)
+                await query.message.reply_text(msg_text, parse_mode="Markdown")
+        await query.message.reply_text("✅ Selesai. Terima kasih.")
     else:
-        # Non-AGENCY channels: aggregated totals by status
         status_counts = {s: 0 for s in ALL_STATUSES}
         status_counts["OTHER"] = 0
         total = 0
@@ -652,14 +661,14 @@ async def sales_month_selected(update: Update, context: ContextTypes.DEFAULT_TYP
                     lines.append(f"   🔄 {s}: {status_counts[s]}")
         if status_counts["OTHER"] > 0:
             lines.append(f"   ❓ OTHER: {status_counts['OTHER']}")
-        await query.edit_message_text("\n".join(lines), parse_mode="Markdown")
+        await processing_msg.edit_text("\n".join(lines), parse_mode="Markdown")
     return ConversationHandler.END
 
 async def sales_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Laporan dibatalkan.")
     return ConversationHandler.END
 
-# ---------- USAGE REPORT ----------
+# ---------- USAGE REPORT (unchanged) ----------
 async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if not can_view_reports(user_id):
@@ -826,7 +835,6 @@ def main():
         logger.info("No proxy URL set")
     app = builder.build()
 
-    # Registration conversation
     reg_conv = ConversationHandler(
         entry_points=[CommandHandler("register", register_start)],
         states={
@@ -845,7 +853,6 @@ def main():
     app.add_handler(CommandHandler("pending", pending))
     app.add_handler(CommandHandler("report", report))
 
-    # Sales report conversation
     sales_conv = ConversationHandler(
         entry_points=[CommandHandler("salesreport", sales_report_start)],
         states={
@@ -862,7 +869,6 @@ def main():
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("guide", guide_command))
 
-    # Order lookup conversation
     order_conv = ConversationHandler(
         entry_points=[CommandHandler("start", start)],
         states={WAITING_FOR_ORDER_ID: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_order_id)]},
