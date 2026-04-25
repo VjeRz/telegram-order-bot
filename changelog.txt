@@ -1,163 +1,107 @@
 ================================================================================
 CEK ORDER SF BRANCH MANADO – TELEGRAM BOT
-USER GUIDE
+COMPLETE CHANGELOG
 ================================================================================
 
-This bot helps you check order details, track salesperson performance, and monitor bot usage.
+Version 1.0 – Initial Release (April 4, 2026)
+---------------------------------------------
+- Basic bot with /start command.
+- Reads Order ID from a Google Sheet (column headers: Order ID, Channel Name, SalesForce, Tanggal Submit, Status Order, Fallout Reason).
+- Replies with order details in plain text.
+- Simple conversation handler (no timeout).
+- No registration, no approval.
+- Direct connection to Telegram API (no proxy).
 
-CONTENTS
---------
-1. How to register
-2. Commands overview
-3. Order lookup (/start)
-4. Sales performance report (/salesreport)
-5. Usage report (/report) – for Manager, Supervisor, HSA, IT
-6. Help and guide (/help, /guide)
-7. Role access summary
-8. Troubleshooting
+Version 1.1 – Cloudflare Proxy & Python 3.12 fix (April 4)
+----------------------------------------------------------
+- Added Cloudflare Worker proxy to bypass Railway IP blocks.
+- Added runtime.txt to force Python 3.12 (avoided a library error).
+- Environment variable CLOUDFLARE_WORKER_URL.
 
-================================================================================
-1. HOW TO REGISTER
-================================================================================
-All first‑time users must register.
+Version 1.2 – Case‑insensitive matching & cleaning (April 5)
+-------------------------------------------------------------
+- clean_text() function removes invisible characters (zero‑width spaces, non‑breaking spaces).
+- Order ID matching made case‑insensitive (.lower()).
+- Removed Markdown parsing to avoid errors.
+- Greeting changed to "Semangat Pagi, Masukan Order ID..." (fixed, no time check).
 
-Step by step:
-1. Send /register to the bot.
-2. Enter your full name.
-3. Enter your email address.
-4. Select your role group (Agency, Branch, or Technician).
-5. Select your sub‑role:
-   - Agency: Team Leader, Salesforce
-   - Branch: Inputters, Supervisor, Manager, IT
-   - Technician: Technician, HSA
-6. If you are from Agency, also choose your WOK (Working Area) and enter your SF ID.
-7. After registration, your status is "pending". IT will approve you.
-8. You will receive a message when approved. Then you can use /start.
+Version 1.3 – Added STO & WOK to order reply (April 6)
+-------------------------------------------------------
+- Order sheet now expects columns STO and WOK.
+- Reply shows 📠 STO and 🪪 WOK.
 
-Note: Only the IT role can approve registrations. IT users see pending registrations via /pending.
+Version 2.0 – Registration & Approval System (April 10)
+--------------------------------------------------------
+- New command /register with multi‑step conversation.
+- Role groups: Agency, Branch, Technician.
+- Sub‑roles: Team Leader, Salesforce, Inputters, Supervisor, Manager, IT, Technician, HSA.
+- User data stored in "Bot_Data" spreadsheet (tabs: Users, UsageLog).
+- Branch users auto‑approved; Agency & Technician require IT approval.
+- IT approval by inline buttons (notifications to IT_TELEGRAM_ID).
+- /pending command (IT only) lists pending registrations.
+- Every order lookup is logged to UsageLog.
+- /report command for usage reports (day/week/month/custom range, CSV for monthly/custom).
+- Report access: Manager, Supervisor, HSA, IT.
 
-================================================================================
-2. COMMANDS OVERVIEW
-================================================================================
-/register      – Register as a new user (all roles).
-/start         – Check an Order ID (approved users only).
-/salesreport   – Interactive sales performance report (Supervisor, Team Leader, IT, Manager).
-/report        – Bot usage report (Manager, Supervisor, HSA, IT).
-/pending       – See pending registrations and approve/reject (IT only).
-/guide         – Detailed guide based on your role.
-/help          – List of commands.
-/ping          – Test if the bot is alive.
+Version 2.1 – WOK and SFID only for Agency (April 11)
+-----------------------------------------------------
+- During registration, only Agency group is asked for WOK (4 areas: Manado‑Talaud, Bitung‑Minahasa, Bolaang Mongondow, Gorontalo) and SFID.
+- Branch and Technician skip these fields.
 
-================================================================================
-3. ORDER LOOKUP (/start)
-================================================================================
-After approval, send /start. The bot will reply:
-"Semangat Pagi, Masukan Order ID
-Contoh: AOs326032509275620607db90"
-Type or paste the Order ID. The bot will reply with:
-- Order ID
-- STO
-- WOK
-- Order Status
-- Channel Name
-- Fallout Reason
-- SalesForce
-- Tanggal Complete
-- Tanggal Input
-- Sub Error Code
-- Technician Notes
+Version 2.2 – Fixed approval callback (April 14)
+------------------------------------------------
+- Changed users_sheet.update() to update_cell() to fix API error.
+- /pending buttons now include row index for correct row update.
 
-If the Order ID is not found, you will be told to try again.
+Version 2.3 – Welcome guides /guide command (April 14)
+-------------------------------------------------------
+- New command /guide – tailored welcome/help message based on role.
+- After approval, user automatically receives welcome message.
+- /start shows registration guide for unregistered users, otherwise directly asks for Order ID (no extra guide).
 
-================================================================================
-4. SALES PERFORMANCE REPORT (/salesreport)
-================================================================================
-Available for: Supervisor, Team Leader, IT, Manager.
-
-How to use:
-1. Send /salesreport.
-2. Choose a WOK:
-   • MANADO TALAUD
-   • BOLAANG MONGONDOW
-   • GORONTALO - PAHUWATO
-   • BITUNG MINAHASA
-3. Choose a Channel:
-   • B2B2C&OTHERS
-   • AGENCY
-   • GRAPARI
-   • SOBI AFFILIATE
-   • WEB&APP
-   (Team Leader: channel is forced to AGENCY – no choice.)
-4. Choose a Month (January to December).
-5. The bot processes data and sends the report.
-
-What the report shows:
+Version 2.4 – Sales performance report (April 25)
+-------------------------------------------------
+- New command /salesreport (interactive menu).
+- Only Supervisor, Team Leader, IT, Manager can use it.
+- Step 1: choose WOK (4 options).
+- Step 2: choose Channel (B2B2C&OTHERS, AGENCY, GRAPARI, SOBI AFFILIATE, WEB&APP).
+   – Team Leader automatically forced to AGENCY (skips channel step).
+- Step 3: choose Month (January–December).
+- Report counts orders based on Tanggal Input (supports both DD/MM/YYYY and YYYY-MM-DD formats).
 - For AGENCY channel:
-   – Each salesperson’s name, total orders, and counts per status (all 27 statuses + OTHER).
-   – Team Leader also sees a list of Order IDs with their status.
-- For other channels (GRAPARI, etc.):
-   – Aggregated totals per status for that channel and WOK.
+   – Per‑salesperson breakdown with total orders and status counts (all 27 statuses + OTHER).
+   – Team Leader additionally sees a list of Order IDs with their status.
+- For non‑AGENCY channels: aggregated totals per status.
+- Messages split into separate messages per salesperson to avoid Telegram 4096 character limit.
+- No Markdown in reports; plain text with emojis.
 
-The report is split into multiple messages (one per salesperson) to avoid character limits.
+Version 2.5 – Full status list & bug fixes (April 25)
+------------------------------------------------------
+- Predefined list of 27 order statuses (from business requirements).
+- Any unknown status counts as "OTHER".
+- Fixed gspread exception (CellNotFound does not exist; replaced with generic Exception).
+- Removed all parse_mode="Markdown" to avoid "Can't parse entities" error caused by special characters in Order IDs.
+- Fixed sales report not showing any output (Message_too_long error) by sending each salesperson separately.
+- Added chunking for Team Leader's order list (splits into multiple messages if needed).
+- Order lookup restored (was broken by gspread exception).
 
-================================================================================
-5. USAGE REPORT (/report)
-================================================================================
-Available for: Manager, Supervisor, HSA, IT.
+Current Features (as of April 25, 2026)
+----------------------------------------
+- Registration with role selection, WOK/SFID for Agency only.
+- IT approval via /pending or inline buttons.
+- Order lookup (/start) for approved users.
+- Usage logging & /report for Manager/Supervisor/HSA/IT.
+- Sales performance report (/salesreport) for Supervisor, Team Leader, IT, Manager.
+- Help (/help) and Guide (/guide) commands.
+- Cloudflare proxy for Railway connectivity.
+- Google Sheets integration (order sheet + Bot_Data with Users and UsageLog tabs).
+- All messages use plain text (emojis allowed, no Markdown).
 
-Shows how many times each registered user has used /start to check orders.
-
-Commands:
-/report day        – Today’s usage (text summary)
-/report week       – This week’s usage (text)
-/report month      – This month’s usage (CSV file)
-/report 2026-04-01 2026-04-10 – Custom date range (CSV file)
-
-The CSV file can be opened in Excel or Google Sheets.
-
-================================================================================
-6. HELP AND GUIDE (/help, /guide)
-================================================================================
-/help   – Lists all commands with short descriptions.
-/guide  – Shows a detailed message based on your role, including how to check orders and how to use the sales report (if applicable).
-
-================================================================================
-7. ROLE ACCESS SUMMARY
-================================================================================
-| Role               | /start | /salesreport | /report | /pending | /guide |
-|--------------------|--------|--------------|---------|----------|--------|
-| Agency - Team Leader|   Yes  | Yes          | No      | No       | Yes    |
-| Agency - Salesforce |   Yes  | No           | No      | No       | Yes    |
-| Branch - Inputters  |   Yes  | No           | No      | No       | Yes    |
-| Branch - Supervisor |   Yes  | Yes          | Yes     | No       | Yes    |
-| Branch - Manager    |   Yes  | Yes          | Yes     | No       | Yes    |
-| Branch - IT         |   Yes  | Yes          | Yes     | Yes      | Yes    |
-| Technician - Technician | Yes | No        | No      | No       | Yes    |
-| Technician - HSA    |   Yes  | Yes          | Yes     | No       | Yes    |
-
-Note: /salesreport and /report are only available after approval.
+Known limitations
+-----------------
+- Order sheet with >10,000 rows may cause slower responses. Archive old data recommended.
+- Sales report processes all rows; acceptable for up to ~10,000 rows. Cache refreshes every 5 minutes.
 
 ================================================================================
-8. TROUBLESHOOTING
-================================================================================
-Bot doesn't respond /start:
-- You are not registered or not approved. Register with /register and wait for IT approval.
-- The bot may be down. Send /ping – if it replies "pong", the bot is alive.
-
-Order ID not found:
-- Check for typos, extra spaces, or wrong case. The bot ignores case but not spaces.
-- The Order ID may not exist in the order sheet.
-
-Sales report empty or error:
-- Ensure you selected a WOK, Channel, and Month that have data.
-- If you see "Message_too_long", it has been fixed – contact IT if still occurs.
-
-Approval buttons not appearing:
-- Only the IT user (Telegram ID set in environment variable) receives them. If you are IT, check your chat with the bot.
-
-Need to change role or re‑register?
-- Contact IT. They can manually edit the Users sheet or delete your entry so you can re‑register.
-
-================================================================================
-For further assistance, contact your IT administrator.
+End of Changelog
 ================================================================================
