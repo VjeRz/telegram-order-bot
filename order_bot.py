@@ -37,9 +37,10 @@ REG_WOK = 6
 REG_SFID = 7
 BULK_AWAITING_IDS = 10
 SALES_WOK = 20
-SALES_CHANNEL = 21
-SALES_YEAR = 22
-SALES_MONTH = 23
+DETAIL_WOK = 21          # new state for detailed report WOK selection
+SALES_CHANNEL = 22
+SALES_YEAR = 23
+SALES_MONTH = 24
 SUMMARY_YEAR = 30
 SUMMARY_MONTH = 31
 
@@ -105,7 +106,6 @@ def get_order_sheet_records():
     return get_order_sheet_records.cache
 
 def get_raw_records():
-    """Fetch fresh records without cache (used for summary)."""
     return order_sheet.get_all_records()
 
 def find_order_details(order_id: str):
@@ -285,7 +285,7 @@ async def send_guide(update: Update, user_id):
         )
     await reply(text, parse_mode="Markdown")
 
-# ---------- REGISTRATION FLOW (unchanged) ----------
+# ---------- REGISTRATION FLOW ----------
 async def register_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.callback_query:
         query = update.callback_query
@@ -609,7 +609,7 @@ async def sales_choose(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("BITUNG MINAHASA", callback_data="wok_BITUNG MINAHASA")]
         ])
         await query.message.reply_text("Pilih WOK:", reply_markup=wok_keyboard)
-        return SALES_WOK
+        return DETAIL_WOK   # new state for WOK selection
     elif data == "sales_summary":
         await query.message.delete()
         current_year = datetime.now().year
@@ -625,215 +625,8 @@ async def sales_choose(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return ConversationHandler.END
     return ConversationHandler.END
 
-# ---------- SUMMARY REPORT HANDLERS ----------
-async def summary_year_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    year = int(query.data.split("_")[1])
-    context.user_data["summary_year"] = year
-    month_keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("Januari", callback_data="summonth_1"),
-         InlineKeyboardButton("Februari", callback_data="summonth_2"),
-         InlineKeyboardButton("Maret", callback_data="summonth_3")],
-        [InlineKeyboardButton("April", callback_data="summonth_4"),
-         InlineKeyboardButton("Mei", callback_data="summonth_5"),
-         InlineKeyboardButton("Juni", callback_data="summonth_6")],
-        [InlineKeyboardButton("Juli", callback_data="summonth_7"),
-         InlineKeyboardButton("Agustus", callback_data="summonth_8"),
-         InlineKeyboardButton("September", callback_data="summonth_9")],
-        [InlineKeyboardButton("Oktober", callback_data="summonth_10"),
-         InlineKeyboardButton("November", callback_data="summonth_11"),
-         InlineKeyboardButton("Desember", callback_data="summonth_12")]
-    ])
-    await query.edit_message_text("Pilih bulan:", reply_markup=month_keyboard)
-    return SUMMARY_MONTH
-
-async def summary_month_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    month_num = int(query.data.split("_")[1])
-    month_names = ["Januari", "Februari", "Maret", "April", "Mei", "Juni",
-                   "Juli", "Agustus", "September", "Oktober", "November", "Desember"]
-    month_name = month_names[month_num - 1]
-    year = context.user_data.get("summary_year", datetime.now().year)
-
-    # Get fresh records
-    records = get_raw_records()
-
-    # Previous month (previous year if January)
-    prev_month = month_num - 1 if month_num > 1 else 12
-    prev_year = year if month_num > 1 else year - 1
-
-    def extract_date(date_str):
-        """Return (year, month) from Tanggal Input."""
-        if not date_str:
-            return None, None
-        try:
-            # Try ISO format first
-            if '-' in date_str:
-                parts = date_str.split()[0].split('-')
-                if len(parts) == 3:
-                    return int(parts[0]), int(parts[1])
-            # Try DD/MM/YYYY
-            parts = date_str.split()[0].split('/')
-            if len(parts) == 3:
-                return int(parts[2]), int(parts[1])
-        except:
-            pass
-        return None, None
-
-    # Collect totals per WOK
-    wok_list = ["MANADO TALAUD", "BOLAANG MONGONDOW", "GORONTALO - PAHUWATO", "BITUNG MINAHASA"]
-    wok_stats = {}
-    total_input = 0
-    total_completed = 0
-    total_fallout = 0
-
-    for rec in records:
-        wok = rec.get("WOK", "")
-        if wok not in wok_list:
-            continue
-        tgl = rec.get("Tanggal Input", "")
-        y, m = extract_date(tgl)
-        if y is None or m is None:
-            continue
-        status = (rec.get("Status Order", "") or "").strip().upper()
-        # Count for current period
-        if y == year and m == month_num:
-            total_input += 1
-            if status == "COMPLETED":
-                total_completed += 1
-            elif status == "FALLOUT":
-                total_fallout += 1
-            # Accumulate per WOK
-            if wok not in wok_stats:
-                wok_stats[wok] = {"input": 0, "completed": 0, "fallout": 0, "prev_input": 0}
-            wok_stats[wok]["input"] += 1
-            if status == "COMPLETED":
-                wok_stats[wok]["completed"] += 1
-            elif status == "FALLOUT":
-                wok_stats[wok]["fallout"] += 1
-        # Count for previous period (for MoM)
-        if y == prev_year and m == prev_month:
-            if wok not in wok_stats:
-                wok_stats[wok] = {"input": 0, "completed": 0, "fallout": 0, "prev_input": 0}
-            wok_stats[wok]["prev_input"] += 1
-
-    # Build per WOK table data
-    table_wok = []
-    for wok in wok_list:
-        stats = wok_stats.get(wok, {"input": 0, "completed": 0, "fallout": 0, "prev_input": 0})
-        inp = stats["input"]
-        comp = stats["completed"]
-        flt = stats["fallout"]
-        prev = stats["prev_input"]
-        completion = (comp / inp * 100) if inp > 0 else 0
-        contrib = (inp / total_input * 100) if total_input > 0 else 0
-        mom = ((inp - prev) / prev * 100) if prev > 0 else (100 if inp > 0 else 0)
-        table_wok.append({
-            "wok": wok,
-            "input": inp,
-            "completed": comp,
-            "fallout": flt,
-            "completion": completion,
-            "contrib": contrib,
-            "mom": mom
-        })
-
-    # Total row for WOK table
-    total_completion = (total_completed / total_input * 100) if total_input > 0 else 0
-    total_mom = 0
-    # Compute total previous input across all WOKs
-    total_prev = sum(stats.get("prev_input", 0) for stats in wok_stats.values())
-    total_mom = ((total_input - total_prev) / total_prev * 100) if total_prev > 0 else (100 if total_input > 0 else 0)
-
-    # Message 1: per WOK
-    lines1 = ["📊 *RINGKASAN PER WOK*", f"📅 {month_name.upper()} {year}", ""]
-    lines1.append("```")
-    lines1.append(f"{'WOK':<22} {'Input':>7} {'Cmpl':>6} {'Flt':>5} {'IO/PS':>6} {'Kontrib':>8} {'MoM':>6}")
-    lines1.append("-" * 70)
-    for row in table_wok:
-        lines1.append(f"{row['wok'][:20]:<20} {row['input']:>7} {row['completed']:>6} {row['fallout']:>5} {row['completion']:>5.1f}% {row['contrib']:>7.1f}% {row['mom']:>5.1f}%")
-    # Total row
-    lines1.append("-" * 70)
-    lines1.append(f"{'TOTAL':<20} {total_input:>7} {total_completed:>6} {total_fallout:>5} {total_completion:>5.1f}% {'100.0':>7}% {total_mom:>5.1f}%")
-    lines1.append("```")
-    await query.message.reply_text("\n".join(lines1), parse_mode="Markdown")
-
-    # --- Second table: per Channel ---
-    channels = ["B2B2C&OTHERS", "AGENCY", "GRAPARI", "SOBI AFFILIATE", "WEB&APP"]
-    chan_stats = {}
-    total_chan_input = 0
-    total_chan_completed = 0
-    total_chan_fallout = 0
-
-    for rec in records:
-        channel = rec.get("Channel Name", "")
-        if channel not in channels:
-            continue
-        tgl = rec.get("Tanggal Input", "")
-        y, m = extract_date(tgl)
-        if y is None or m is None:
-            continue
-        status = (rec.get("Status Order", "") or "").strip().upper()
-        if y == year and m == month_num:
-            total_chan_input += 1
-            if status == "COMPLETED":
-                total_chan_completed += 1
-            elif status == "FALLOUT":
-                total_chan_fallout += 1
-            if channel not in chan_stats:
-                chan_stats[channel] = {"input": 0, "completed": 0, "fallout": 0, "prev_input": 0}
-            chan_stats[channel]["input"] += 1
-            if status == "COMPLETED":
-                chan_stats[channel]["completed"] += 1
-            elif status == "FALLOUT":
-                chan_stats[channel]["fallout"] += 1
-        # Previous period
-        if y == prev_year and m == prev_month:
-            if channel not in chan_stats:
-                chan_stats[channel] = {"input": 0, "completed": 0, "fallout": 0, "prev_input": 0}
-            chan_stats[channel]["prev_input"] += 1
-
-    table_chan = []
-    for ch in channels:
-        stats = chan_stats.get(ch, {"input": 0, "completed": 0, "fallout": 0, "prev_input": 0})
-        inp = stats["input"]
-        comp = stats["completed"]
-        flt = stats["fallout"]
-        prev = stats["prev_input"]
-        completion = (comp / inp * 100) if inp > 0 else 0
-        contrib = (inp / total_chan_input * 100) if total_chan_input > 0 else 0
-        mom = ((inp - prev) / prev * 100) if prev > 0 else (100 if inp > 0 else 0)
-        table_chan.append({
-            "channel": ch,
-            "input": inp,
-            "completed": comp,
-            "fallout": flt,
-            "completion": completion,
-            "contrib": contrib,
-            "mom": mom
-        })
-
-    total_chan_completion = (total_chan_completed / total_chan_input * 100) if total_chan_input > 0 else 0
-    total_chan_prev = sum(stats.get("prev_input", 0) for stats in chan_stats.values())
-    total_chan_mom = ((total_chan_input - total_chan_prev) / total_chan_prev * 100) if total_chan_prev > 0 else (100 if total_chan_input > 0 else 0)
-
-    lines2 = ["📊 *RINGKASAN PER CHANNEL*", f"📅 {month_name.upper()} {year}", ""]
-    lines2.append("```")
-    lines2.append(f"{'Channel':<18} {'Input':>7} {'Cmpl':>6} {'Flt':>5} {'IO/PS':>6} {'Kontrib':>8} {'MoM':>6}")
-    lines2.append("-" * 70)
-    for row in table_chan:
-        lines2.append(f"{row['channel'][:16]:<16} {row['input']:>7} {row['completed']:>6} {row['fallout']:>5} {row['completion']:>5.1f}% {row['contrib']:>7.1f}% {row['mom']:>5.1f}%")
-    lines2.append("-" * 70)
-    lines2.append(f"{'TOTAL':<16} {total_chan_input:>7} {total_chan_completed:>6} {total_chan_fallout:>5} {total_chan_completion:>5.1f}% {'100.0':>7}% {total_chan_mom:>5.1f}%")
-    lines2.append("```")
-    await query.message.reply_text("\n".join(lines2), parse_mode="Markdown")
-
-    return ConversationHandler.END
-
-# ---------- DETAILED SALES REPORT (unchanged) ----------
-async def sales_wok_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# ---------- DETAILED REPORT WOK HANDLER ----------
+async def detail_wok_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     wok = query.data.split("_", 1)[1]
@@ -863,6 +656,7 @@ async def sales_wok_selected(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await query.edit_message_text("Pilih Channel:", reply_markup=channel_keyboard)
         return SALES_CHANNEL
 
+# ---------- CHANNEL, YEAR, MONTH HANDLERS (same as before) ----------
 async def sales_channel_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -899,7 +693,7 @@ async def sales_year_selected(update: Update, context: ContextTypes.DEFAULT_TYPE
     return SALES_MONTH
 
 async def sales_month_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Detailed report (existing logic, unchanged)
+    # Detailed report logic (same as before)
     query = update.callback_query
     await query.answer()
     month_num = int(query.data.split("_")[1])
@@ -1077,6 +871,195 @@ async def sales_month_selected(update: Update, context: ContextTypes.DEFAULT_TYP
         await processing_msg.edit_text("\n".join(lines))
     return ConversationHandler.END
 
+# ---------- SUMMARY REPORT HANDLERS (unchanged from last working version) ----------
+async def summary_year_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    year = int(query.data.split("_")[1])
+    context.user_data["summary_year"] = year
+    month_keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("Januari", callback_data="summonth_1"),
+         InlineKeyboardButton("Februari", callback_data="summonth_2"),
+         InlineKeyboardButton("Maret", callback_data="summonth_3")],
+        [InlineKeyboardButton("April", callback_data="summonth_4"),
+         InlineKeyboardButton("Mei", callback_data="summonth_5"),
+         InlineKeyboardButton("Juni", callback_data="summonth_6")],
+        [InlineKeyboardButton("Juli", callback_data="summonth_7"),
+         InlineKeyboardButton("Agustus", callback_data="summonth_8"),
+         InlineKeyboardButton("September", callback_data="summonth_9")],
+        [InlineKeyboardButton("Oktober", callback_data="summonth_10"),
+         InlineKeyboardButton("November", callback_data="summonth_11"),
+         InlineKeyboardButton("Desember", callback_data="summonth_12")]
+    ])
+    await query.edit_message_text("Pilih bulan:", reply_markup=month_keyboard)
+    return SUMMARY_MONTH
+
+async def summary_month_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    month_num = int(query.data.split("_")[1])
+    month_names = ["Januari", "Februari", "Maret", "April", "Mei", "Juni",
+                   "Juli", "Agustus", "September", "Oktober", "November", "Desember"]
+    month_name = month_names[month_num - 1]
+    year = context.user_data.get("summary_year", datetime.now().year)
+
+    records = get_raw_records()
+    prev_month = month_num - 1 if month_num > 1 else 12
+    prev_year = year if month_num > 1 else year - 1
+
+    def extract_date(date_str):
+        if not date_str:
+            return None, None
+        try:
+            if '-' in date_str:
+                parts = date_str.split()[0].split('-')
+                if len(parts) == 3:
+                    return int(parts[0]), int(parts[1])
+            parts = date_str.split()[0].split('/')
+            if len(parts) == 3:
+                return int(parts[2]), int(parts[1])
+        except:
+            pass
+        return None, None
+
+    wok_list = ["MANADO TALAUD", "BOLAANG MONGONDOW", "GORONTALO - PAHUWATO", "BITUNG MINAHASA"]
+    wok_stats = {}
+    total_input = 0
+    total_completed = 0
+    total_fallout = 0
+
+    for rec in records:
+        wok = rec.get("WOK", "")
+        if wok not in wok_list:
+            continue
+        tgl = rec.get("Tanggal Input", "")
+        y, m = extract_date(tgl)
+        if y is None or m is None:
+            continue
+        status = (rec.get("Status Order", "") or "").strip().upper()
+        if y == year and m == month_num:
+            total_input += 1
+            if status == "COMPLETED":
+                total_completed += 1
+            elif status == "FALLOUT":
+                total_fallout += 1
+            if wok not in wok_stats:
+                wok_stats[wok] = {"input": 0, "completed": 0, "fallout": 0, "prev_input": 0}
+            wok_stats[wok]["input"] += 1
+            if status == "COMPLETED":
+                wok_stats[wok]["completed"] += 1
+            elif status == "FALLOUT":
+                wok_stats[wok]["fallout"] += 1
+        if y == prev_year and m == prev_month:
+            if wok not in wok_stats:
+                wok_stats[wok] = {"input": 0, "completed": 0, "fallout": 0, "prev_input": 0}
+            wok_stats[wok]["prev_input"] += 1
+
+    table_wok = []
+    for wok in wok_list:
+        stats = wok_stats.get(wok, {"input": 0, "completed": 0, "fallout": 0, "prev_input": 0})
+        inp = stats["input"]
+        comp = stats["completed"]
+        flt = stats["fallout"]
+        prev = stats["prev_input"]
+        completion = (comp / inp * 100) if inp > 0 else 0
+        contrib = (inp / total_input * 100) if total_input > 0 else 0
+        mom = ((inp - prev) / prev * 100) if prev > 0 else (100 if inp > 0 else 0)
+        table_wok.append({
+            "wok": wok,
+            "input": inp,
+            "completed": comp,
+            "fallout": flt,
+            "completion": completion,
+            "contrib": contrib,
+            "mom": mom
+        })
+
+    total_completion = (total_completed / total_input * 100) if total_input > 0 else 0
+    total_prev = sum(stats.get("prev_input", 0) for stats in wok_stats.values())
+    total_mom = ((total_input - total_prev) / total_prev * 100) if total_prev > 0 else (100 if total_input > 0 else 0)
+
+    lines1 = ["📊 *RINGKASAN PER WOK*", f"📅 {month_name.upper()} {year}", ""]
+    lines1.append("```")
+    lines1.append(f"{'WOK':<22} {'Input':>7} {'Cmpl':>6} {'Flt':>5} {'IO/PS':>6} {'Kontrib':>8} {'MoM':>6}")
+    lines1.append("-" * 70)
+    for row in table_wok:
+        lines1.append(f"{row['wok'][:20]:<20} {row['input']:>7} {row['completed']:>6} {row['fallout']:>5} {row['completion']:>5.1f}% {row['contrib']:>7.1f}% {row['mom']:>5.1f}%")
+    lines1.append("-" * 70)
+    lines1.append(f"{'TOTAL':<20} {total_input:>7} {total_completed:>6} {total_fallout:>5} {total_completion:>5.1f}% {'100.0':>7}% {total_mom:>5.1f}%")
+    lines1.append("```")
+    await query.message.reply_text("\n".join(lines1), parse_mode="Markdown")
+
+    # Per channel summary (same as before)
+    channels = ["B2B2C&OTHERS", "AGENCY", "GRAPARI", "SOBI AFFILIATE", "WEB&APP"]
+    chan_stats = {}
+    total_chan_input = 0
+    total_chan_completed = 0
+    total_chan_fallout = 0
+
+    for rec in records:
+        channel = rec.get("Channel Name", "")
+        if channel not in channels:
+            continue
+        tgl = rec.get("Tanggal Input", "")
+        y, m = extract_date(tgl)
+        if y is None or m is None:
+            continue
+        status = (rec.get("Status Order", "") or "").strip().upper()
+        if y == year and m == month_num:
+            total_chan_input += 1
+            if status == "COMPLETED":
+                total_chan_completed += 1
+            elif status == "FALLOUT":
+                total_chan_fallout += 1
+            if channel not in chan_stats:
+                chan_stats[channel] = {"input": 0, "completed": 0, "fallout": 0, "prev_input": 0}
+            chan_stats[channel]["input"] += 1
+            if status == "COMPLETED":
+                chan_stats[channel]["completed"] += 1
+            elif status == "FALLOUT":
+                chan_stats[channel]["fallout"] += 1
+        if y == prev_year and m == prev_month:
+            if channel not in chan_stats:
+                chan_stats[channel] = {"input": 0, "completed": 0, "fallout": 0, "prev_input": 0}
+            chan_stats[channel]["prev_input"] += 1
+
+    table_chan = []
+    for ch in channels:
+        stats = chan_stats.get(ch, {"input": 0, "completed": 0, "fallout": 0, "prev_input": 0})
+        inp = stats["input"]
+        comp = stats["completed"]
+        flt = stats["fallout"]
+        prev = stats["prev_input"]
+        completion = (comp / inp * 100) if inp > 0 else 0
+        contrib = (inp / total_chan_input * 100) if total_chan_input > 0 else 0
+        mom = ((inp - prev) / prev * 100) if prev > 0 else (100 if inp > 0 else 0)
+        table_chan.append({
+            "channel": ch,
+            "input": inp,
+            "completed": comp,
+            "fallout": flt,
+            "completion": completion,
+            "contrib": contrib,
+            "mom": mom
+        })
+
+    total_chan_completion = (total_chan_completed / total_chan_input * 100) if total_chan_input > 0 else 0
+    total_chan_prev = sum(stats.get("prev_input", 0) for stats in chan_stats.values())
+    total_chan_mom = ((total_chan_input - total_chan_prev) / total_chan_prev * 100) if total_chan_prev > 0 else (100 if total_chan_input > 0 else 0)
+
+    lines2 = ["📊 *RINGKASAN PER CHANNEL*", f"📅 {month_name.upper()} {year}", ""]
+    lines2.append("```")
+    lines2.append(f"{'Channel':<18} {'Input':>7} {'Cmpl':>6} {'Flt':>5} {'IO/PS':>6} {'Kontrib':>8} {'MoM':>6}")
+    lines2.append("-" * 70)
+    for row in table_chan:
+        lines2.append(f"{row['channel'][:16]:<16} {row['input']:>7} {row['completed']:>6} {row['fallout']:>5} {row['completion']:>5.1f}% {row['contrib']:>7.1f}% {row['mom']:>5.1f}%")
+    lines2.append("-" * 70)
+    lines2.append(f"{'TOTAL':<16} {total_chan_input:>7} {total_chan_completed:>6} {total_chan_fallout:>5} {total_chan_completion:>5.1f}% {'100.0':>7}% {total_chan_mom:>5.1f}%")
+    lines2.append("```")
+    await query.message.reply_text("\n".join(lines2), parse_mode="Markdown")
+    return ConversationHandler.END
+
 # ---------- USAGE REPORT ----------
 async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -1185,6 +1168,7 @@ def main():
         logger.info("No proxy URL set")
     app = builder.build()
 
+    # Registration conversation
     reg_conv = ConversationHandler(
         entry_points=[CommandHandler("register", register_start), CallbackQueryHandler(register_start, pattern="^menu_register$")],
         states={
@@ -1204,10 +1188,11 @@ def main():
     app.add_handler(CommandHandler("report", report))
 
     # Sales report conversation
-    sales_main_conv = ConversationHandler(
+    sales_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(sales_report_main, pattern="^menu_sales_report$")],
         states={
             SALES_WOK: [CallbackQueryHandler(sales_choose, pattern="^(sales_detail|sales_summary|sales_back)$")],
+            DETAIL_WOK: [CallbackQueryHandler(detail_wok_selected, pattern="^wok_")],
             SALES_CHANNEL: [CallbackQueryHandler(sales_channel_selected, pattern="^chan_")],
             SALES_YEAR: [CallbackQueryHandler(sales_year_selected, pattern="^year_")],
             SALES_MONTH: [CallbackQueryHandler(sales_month_selected, pattern="^month_")],
@@ -1217,8 +1202,7 @@ def main():
         fallbacks=[CommandHandler("cancel", cancel)],
         allow_reentry=True,
     )
-    app.add_handler(sales_main_conv)
-    app.add_handler(CallbackQueryHandler(sales_choose, pattern="^(sales_detail|sales_summary|sales_back)$"))
+    app.add_handler(sales_conv)
 
     # Single order conversation
     single_conv = ConversationHandler(
