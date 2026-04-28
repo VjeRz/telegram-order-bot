@@ -190,7 +190,6 @@ def get_main_menu_keyboard(telegram_id):
         [InlineKeyboardButton("🔍 Cek Order", callback_data="menu_single_order")],
         [InlineKeyboardButton("📦 Cek Banyak Order", callback_data="menu_bulk_order")],
     ]
-    # Show sales report button for any role that can view sales reports
     if can_view_sales_report(telegram_id):
         buttons.insert(1, [InlineKeyboardButton("📊 Cek Laporan Sales", callback_data="menu_sales_report")])
     buttons.append([InlineKeyboardButton("📖 Panduan Pengguna", callback_data="menu_guide")])
@@ -231,17 +230,25 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send_guide(update, user_id)
         await show_main_menu(update, user_id)
 
-# ---------- COMBINED GUIDE ----------
+# ---------- COMBINED GUIDE (FIXED) ----------
 async def send_guide(update: Update, user_id):
+    # Determine the correct way to reply
+    if update.callback_query:
+        msg = update.callback_query.message
+        reply = msg.reply_text
+    else:
+        reply = update.message.reply_text
+
     role_group, subrole = get_user_role(user_id)
     if not role_group:
         text = (
             "📖 *Panduan Pengguna*\n\n"
             "Anda belum terdaftar. Silakan gunakan tombol *Daftar* di bawah untuk memulai registrasi.\n\n"
             "Setelah mendaftar, Anda harus menunggu persetujuan dari IT. Anda akan diberi tahu setelah disetujui.\n\n"
-            "Untuk bantuan lebih lanjut, hubungi IT."
+            "Jika Anda sudah terdaftar dan disetujui, gunakan /start untuk memeriksa Order ID.\n\n"
+            "Untuk bantuan lebih lanjut, ketik /help."
         )
-        await update.message.reply_text(text, parse_mode="Markdown")
+        await reply(text, parse_mode="Markdown")
         return
     if can_view_sales_report(user_id) or subrole in ["Manager", "Supervisor", "HSA", "IT"]:
         text = (
@@ -268,9 +275,9 @@ async def send_guide(update: Update, user_id):
             "Laporan hanya tersedia untuk Supervisor, Manager, HSA, IT, dan Team Leader.\n\n"
             "Untuk daftar perintah lengkap, ketik /help."
         )
-    await update.message.reply_text(text, parse_mode="Markdown")
+    await reply(text, parse_mode="Markdown")
 
-# ---------- REGISTRATION FLOW (unchanged) ----------
+# ---------- REGISTRATION FLOW ----------
 async def register_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.callback_query:
         query = update.callback_query
