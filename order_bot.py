@@ -108,6 +108,45 @@ def get_order_sheet_records():
 def get_raw_records():
     return order_sheet.get_all_records()
 
+def get_last_order_date():
+    """Return the latest Tanggal Input from the order sheet as DD/MM/YYYY, or current date if none."""
+    if not hasattr(get_last_order_date, "cache"):
+        get_last_order_date.cache = None
+        get_last_order_date.cache_time = None
+    now = datetime.now()
+    if get_last_order_date.cache is None or (now - get_last_order_date.cache_time).total_seconds() > 300:
+        try:
+            records = get_raw_records()
+            latest = None
+            for rec in records:
+                tgl = rec.get("Tanggal Input", "")
+                if not tgl:
+                    continue
+                # Try to parse the date
+                try:
+                    if '-' in tgl:
+                        date_part = tgl.split()[0]
+                        y, m, d = map(int, date_part.split('-'))
+                        dt = datetime(y, m, d)
+                    else:
+                        date_part = tgl.split()[0]
+                        d, m, y = map(int, date_part.split('/'))
+                        dt = datetime(y, m, d)
+                    if latest is None or dt > latest:
+                        latest = dt
+                except:
+                    continue
+            if latest:
+                get_last_order_date.cache = latest.strftime("%d/%m/%Y")
+            else:
+                get_last_order_date.cache = datetime.now().strftime("%d/%m/%Y")
+            get_last_order_date.cache_time = now
+        except Exception as e:
+            logger.error(f"Error getting last order date: {e}")
+            get_last_order_date.cache = datetime.now().strftime("%d/%m/%Y")
+            get_last_order_date.cache_time = now
+    return get_last_order_date.cache
+
 def find_order_details(order_id: str):
     clean_input = clean_text(order_id)
     try:
@@ -130,9 +169,6 @@ def find_order_details(order_id: str):
     except Exception as e:
         logger.error(f"Error finding order {clean_input}: {e}")
         return None
-
-def get_last_update_time():
-    return datetime.now().strftime("%d/%m/%Y")
 
 def is_user_approved(telegram_id):
     records = users_sheet.get_all_records()
@@ -285,7 +321,7 @@ async def send_guide(update: Update, user_id):
         )
     await reply(text, parse_mode="Markdown")
 
-# ---------- REGISTRATION FLOW ----------
+# ---------- REGISTRATION FLOW (unchanged) ----------
 async def register_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.callback_query:
         query = update.callback_query
@@ -500,7 +536,7 @@ async def receive_single_order(update: Update, context: ContextTypes.DEFAULT_TYP
     order_id = clean_text(raw_input)
     data = find_order_details(order_id)
     if data is None:
-        last_update = get_last_update_time()
+        last_update = get_last_order_date()
         error_msg = (
             f"❌ Maaf Order ID Tidak Ditemukan atau Belum Terupdate\n"
             f"📅 Last Update Data: {last_update}\n\n"
@@ -761,6 +797,8 @@ async def sales_month_selected(update: Update, context: ContextTypes.DEFAULT_TYP
         if status_counts["OTHER"] > 0:
             perc_other = (status_counts["OTHER"] / total) * 100 if total > 0 else 0
             lines.append(f"   ❓ OTHER: {status_counts['OTHER']} ({perc_other:.1f}%)")
+        # Add footer with last order date
+        lines.append(f"\n\n📅 Last Update Data: {get_last_order_date()}")
         await processing_msg.edit_text("\n".join(lines))
         return ConversationHandler.END
 
@@ -902,7 +940,7 @@ async def sales_month_selected(update: Update, context: ContextTypes.DEFAULT_TYP
         await processing_msg.edit_text("\n".join(lines))
     return ConversationHandler.END
 
-# ---------- SUMMARY REPORT (with bullet list format) ----------
+# ---------- SUMMARY REPORT (with bullet list format + footer) ----------
 async def summary_year_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -1002,6 +1040,7 @@ async def summary_month_selected(update: Update, context: ContextTypes.DEFAULT_T
     total_prev = sum(stats.get("prev_input", 0) for stats in wok_stats.values())
     total_mom = ((total_input - total_prev) / total_prev * 100) if total_prev > 0 else (100 if total_input > 0 else 0)
     lines1.append(f"\n• *TOTAL*: Input {total_input} | Cmpl {total_completed} | Flt {total_fallout} | IO/PS {total_completion:.1f}% | Kontrib 100.0% | MoM {total_mom:.1f}%")
+    lines1.append(f"\n\n📅 Last Update Data: {get_last_order_date()}")
     await query.message.reply_text("\n".join(lines1), parse_mode="Markdown")
 
     # ----- 2. overall per channel summary (list format) -----
@@ -1053,9 +1092,10 @@ async def summary_month_selected(update: Update, context: ContextTypes.DEFAULT_T
     total_chan_prev = sum(stats.get("prev_input", 0) for stats in chan_stats.values())
     total_chan_mom = ((total_chan_input - total_chan_prev) / total_chan_prev * 100) if total_chan_prev > 0 else (100 if total_chan_input > 0 else 0)
     lines2.append(f"\n• *TOTAL*: Input {total_chan_input} | Cmpl {total_chan_completed} | Flt {total_chan_fallout} | IO/PS {total_chan_completion:.1f}% | Kontrib 100.0% | MoM {total_chan_mom:.1f}%")
+    lines2.append(f"\n\n📅 Last Update Data: {get_last_order_date()}")
     await query.message.reply_text("\n".join(lines2), parse_mode="Markdown")
 
-    # ----- 3. per WOK channel summaries (4 extra messages, list format) -----
+    # ----- 3. per WOK channel summaries (4 extra messages, list format + footer) -----
     for wok in wok_list:
         wok_chan_stats = {ch: {"input": 0, "completed": 0, "fallout": 0, "prev_input": 0} for ch in channels}
         total_wok_input = 0
@@ -1102,6 +1142,7 @@ async def summary_month_selected(update: Update, context: ContextTypes.DEFAULT_T
         total_wok_prev = sum(wok_chan_stats[ch]["prev_input"] for ch in channels)
         total_wok_mom = ((total_wok_input - total_wok_prev) / total_wok_prev * 100) if total_wok_prev > 0 else (100 if total_wok_input > 0 else 0)
         lines_wok.append(f"\n• *TOTAL*: Input {total_wok_input} | Cmpl {total_wok_completed} | Flt {total_wok_fallout} | IO/PS {total_wok_completion:.1f}% | Kontrib 100.0% | MoM {total_wok_mom:.1f}%")
+        lines_wok.append(f"\n\n📅 Last Update Data: {get_last_order_date()}")
         await query.message.reply_text("\n".join(lines_wok), parse_mode="Markdown")
 
     return ConversationHandler.END
