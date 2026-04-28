@@ -36,12 +36,15 @@ REG_SUBROLE = 5
 REG_WOK = 6
 REG_SFID = 7
 BULK_AWAITING_IDS = 10
+# Sales report states
 SALES_WOK = 20
 SALES_CHANNEL = 21
 SALES_YEAR = 22
 SALES_MONTH = 23
+# Summary states
+SUMMARY_YEAR = 30
+SUMMARY_MONTH = 31
 
-# All order statuses (for sales report)
 ALL_STATUSES = [
     "PENDING_CUSTOMER_VERIFICATION", "PROVISION_START", "TECH_ASSIGNED",
     "PENDING_APPOINTMENT_CREATION", "PENDING_CONTRACT_APPROVAL", "PROVISION_ISSUED",
@@ -151,6 +154,10 @@ def can_view_sales_report(telegram_id):
     _, subrole = get_user_role(telegram_id)
     return subrole in ["Supervisor", "Team Leader", "IT", "Manager"]
 
+def can_view_summary(telegram_id):
+    _, subrole = get_user_role(telegram_id)
+    return subrole in ["Manager", "Supervisor", "IT"]  # IT added for debugging
+
 def log_usage(telegram_id, order_id):
     name, role_group, subrole = "", "", ""
     records = users_sheet.get_all_records()
@@ -224,15 +231,14 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await bulk_order_start(update, context)
     elif data == "menu_sales_report":
         await query.message.delete()
-        await sales_report_start(update, context)
+        await sales_report_main(update, context)
     elif data == "menu_guide":
         await query.message.delete()
         await send_guide(update, user_id)
         await show_main_menu(update, user_id)
 
-# ---------- COMBINED GUIDE (FIXED) ----------
+# ---------- COMBINED GUIDE ----------
 async def send_guide(update: Update, user_id):
-    # Determine the correct way to reply
     if update.callback_query:
         msg = update.callback_query.message
         reply = msg.reply_text
@@ -277,7 +283,7 @@ async def send_guide(update: Update, user_id):
         )
     await reply(text, parse_mode="Markdown")
 
-# ---------- REGISTRATION FLOW ----------
+# ---------- REGISTRATION FLOW (unchanged) ----------
 async def register_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.callback_query:
         query = update.callback_query
@@ -569,23 +575,230 @@ async def process_bulk_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await update.message.reply_text(f"✅ Selesai. {len(found)} dari {len(order_ids)} Order ID berhasil ditemukan.")
     return ConversationHandler.END
 
-# ---------- SALES REPORT WITH YEAR ----------
-async def sales_report_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# ---------- NEW: SALES REPORT MAIN MENU (with Ringkasan option) ----------
+async def sales_report_main(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Entry point for sales report: show options for detail or summary."""
     query = update.callback_query
     await query.answer()
     user_id = update.effective_user.id
     if not (is_user_approved(user_id) and can_view_sales_report(user_id)):
-        await query.message.reply_text("Hanya Supervisor, Team Leader, IT, dan Manager yang dapat melihat laporan performa sales.")
+        await query.message.reply_text("Anda tidak memiliki akses ke laporan sales.")
         return ConversationHandler.END
-    wok_keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("MANADO TALAUD", callback_data="wok_MANADO TALAUD")],
-        [InlineKeyboardButton("BOLAANG MONGONDOW", callback_data="wok_BOLAANG MONGONDOW")],
-        [InlineKeyboardButton("GORONTALO - PAHUWATO", callback_data="wok_GORONTALO - PAHUWATO")],
-        [InlineKeyboardButton("BITUNG MINAHASA", callback_data="wok_BITUNG MINAHASA")]
-    ])
-    await query.message.reply_text("Pilih WOK:", reply_markup=wok_keyboard)
-    return SALES_WOK
 
+    # Build keyboard based on role
+    keyboard = [
+        [InlineKeyboardButton("📊 Laporan Detail (per WOK)", callback_data="sales_detail")],
+    ]
+    if can_view_summary(user_id):
+        keyboard.append([InlineKeyboardButton("📈 Ringkasan (per WOK & Channel)", callback_data="sales_summary")])
+    keyboard.append([InlineKeyboardButton("🔙 Kembali ke Menu Utama", callback_data="sales_back")])
+
+    await query.message.reply_text("Pilih jenis laporan:", reply_markup=InlineKeyboardMarkup(keyboard))
+    return SALES_WOK  # stay in a waiting state; we'll handle via callback
+
+async def sales_choose(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    data = query.data
+    if data == "sales_detail":
+        # Start the old detailed flow (WOK selection)
+        await query.message.delete()
+        wok_keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("MANADO TALAUD", callback_data="wok_MANADO TALAUD")],
+            [InlineKeyboardButton("BOLAANG MONGONDOW", callback_data="wok_BOLAANG MONGONDOW")],
+            [InlineKeyboardButton("GORONTALO - PAHUWATO", callback_data="wok_GORONTALO - PAHUWATO")],
+            [InlineKeyboardButton("BITUNG MINAHASA", callback_data="wok_BITUNG MINAHASA")]
+        ])
+        await query.message.reply_text("Pilih WOK:", reply_markup=wok_keyboard)
+        return SALES_WOK
+    elif data == "sales_summary":
+        await query.message.delete()
+        # Ask for year
+        current_year = datetime.now().year
+        year_keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton(str(current_year - 1), callback_data=f"sumyear_{current_year-1}"),
+             InlineKeyboardButton(str(current_year), callback_data=f"sumyear_{current_year}")]
+        ])
+        await query.message.reply_text("Pilih tahun:", reply_markup=year_keyboard)
+        return SUMMARY_YEAR
+    elif data == "sales_back":
+        await query.message.delete()
+        await show_main_menu(update, update.effective_user.id)
+        return ConversationHandler.END
+    return ConversationHandler.END
+
+# ---------- SUMMARY REPORT HANDLERS ----------
+async def summary_year_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    year = int(query.data.split("_")[1])
+    context.user_data["summary_year"] = year
+    month_keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("Januari", callback_data="summonth_1"),
+         InlineKeyboardButton("Februari", callback_data="summonth_2"),
+         InlineKeyboardButton("Maret", callback_data="summonth_3")],
+        [InlineKeyboardButton("April", callback_data="summonth_4"),
+         InlineKeyboardButton("Mei", callback_data="summonth_5"),
+         InlineKeyboardButton("Juni", callback_data="summonth_6")],
+        [InlineKeyboardButton("Juli", callback_data="summonth_7"),
+         InlineKeyboardButton("Agustus", callback_data="summonth_8"),
+         InlineKeyboardButton("September", callback_data="summonth_9")],
+        [InlineKeyboardButton("Oktober", callback_data="summonth_10"),
+         InlineKeyboardButton("November", callback_data="summonth_11"),
+         InlineKeyboardButton("Desember", callback_data="summonth_12")]
+    ])
+    await query.edit_message_text("Pilih bulan:", reply_markup=month_keyboard)
+    return SUMMARY_MONTH
+
+async def summary_month_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    month_num = int(query.data.split("_")[1])
+    month_names = ["Januari", "Februari", "Maret", "April", "Mei", "Juni",
+                   "Juli", "Agustus", "September", "Oktober", "November", "Desember"]
+    month_name = month_names[month_num - 1]
+    year = context.user_data.get("summary_year", datetime.now().year)
+
+    # Fetch records
+    records = get_order_sheet_records()
+    # Determine previous month for MoM
+    prev_month_num = month_num - 1 if month_num > 1 else 12
+    prev_year = year if month_num > 1 else year - 1
+
+    # Helper to count for a given year/month and optional filter
+    def count_by_wok(wok_filter=None, channel_filter=None, status_filter=None):
+        total = 0
+        for rec in records:
+            rec_wok = rec.get("WOK", "")
+            rec_channel = rec.get("Channel Name", "")
+            rec_status = rec.get("Status Order", "").upper()
+            rec_tgl_input = rec.get("Tanggal Input", "")
+            if not rec_tgl_input:
+                continue
+            try:
+                if '-' in rec_tgl_input:
+                    y, m, d = map(int, rec_tgl_input.split()[0].split('-'))
+                else:
+                    d, m, y = map(int, rec_tgl_input.split()[0].split('/'))
+                if y == year and m == month_num:
+                    if wok_filter and rec_wok != wok_filter:
+                        continue
+                    if channel_filter and rec_channel != channel_filter:
+                        continue
+                    if status_filter and rec_status != status_filter:
+                        continue
+                    total += 1
+            except:
+                continue
+        return total
+
+    def count_prev_wok(wok, status=None):
+        total = 0
+        for rec in records:
+            rec_wok = rec.get("WOK", "")
+            rec_status = rec.get("Status Order", "").upper()
+            rec_tgl_input = rec.get("Tanggal Input", "")
+            if not rec_tgl_input:
+                continue
+            try:
+                if '-' in rec_tgl_input:
+                    y, m, d = map(int, rec_tgl_input.split()[0].split('-'))
+                else:
+                    d, m, y = map(int, rec_tgl_input.split()[0].split('/'))
+                if y == prev_year and m == prev_month_num and rec_wok == wok:
+                    if status and rec_status != status:
+                        continue
+                    total += 1
+            except:
+                continue
+        return total
+
+    # Collect data per WOK (unique WOK values from sheet)
+    wok_list = ["MANADO TALAUD", "BOLAANG MONGONDOW", "GORONTALO - PAHUWATO", "BITUNG MINAHASA"]
+    summary_wok = []
+    total_input_all = 0
+    for wok in wok_list:
+        input_cnt = count_by_wok(wok_filter=wok)
+        total_input_all += input_cnt
+        completed = count_by_wok(wok_filter=wok, status_filter="COMPLETED")
+        fallout = count_by_wok(wok_filter=wok, status_filter="FALLOUT")
+        prev_input = count_prev_wok(wok)
+        mom_change = ((input_cnt - prev_input) / prev_input * 100) if prev_input > 0 else (100 if input_cnt > 0 else 0)
+        completion_rate = (completed / input_cnt * 100) if input_cnt > 0 else 0
+        summary_wok.append({
+            "wok": wok,
+            "input": input_cnt,
+            "completed": completed,
+            "fallout": fallout,
+            "completion": completion_rate,
+            "contribution": input_cnt,  # will normalize after total known
+            "mom": mom_change
+        })
+
+    # Calculate contribution percentage
+    for w in summary_wok:
+        w["contribution"] = (w["input"] / total_input_all * 100) if total_input_all > 0 else 0
+
+    # First message: per WOK table
+    lines1 = ["📊 *RINGKASAN PER WOK*", f"📅 {month_name.upper()} {year}", ""]
+    lines1.append("```")
+    lines1.append(f"{'WOK':<22} {'Input':>7} {'Cmpl':>6} {'Flt':>5} {'IO/PS':>6} {'Kontrib':>8} {'MoM':>6}")
+    lines1.append("-" * 70)
+    for w in summary_wok:
+        lines1.append(f"{w['wok'][:20]:<20} {w['input']:>7} {w['completed']:>6} {w['fallout']:>5} {w['completion']:>5.1f}% {w['contribution']:>7.1f}% {w['mom']:>5.1f}%")
+    lines1.append("```")
+    await query.message.reply_text("\n".join(lines1), parse_mode="Markdown")
+
+    # Second message: per Channel (aggregated across all WOKs)
+    channels = ["B2B2C&OTHERS", "AGENCY", "GRAPARI", "SOBI AFFILIATE", "WEB&APP"]
+    total_input_all_channels = 0
+    summary_chan = []
+    for ch in channels:
+        input_cnt = count_by_wok(channel_filter=ch)
+        total_input_all_channels += input_cnt
+        completed = count_by_wok(channel_filter=ch, status_filter="COMPLETED")
+        fallout = count_by_wok(channel_filter=ch, status_filter="FALLOUT")
+        completion_rate = (completed / input_cnt * 100) if input_cnt > 0 else 0
+        # MoM for channel not easily done without additional data; we'll skip or compute similarly
+        # For simplicity, we'll compute the previous month counts for the same channel
+        prev_input = 0
+        for rec in records:
+            rec_channel = rec.get("Channel Name", "")
+            rec_tgl_input = rec.get("Tanggal Input", "")
+            if not rec_tgl_input:
+                continue
+            try:
+                if '-' in rec_tgl_input:
+                    y, m, d = map(int, rec_tgl_input.split()[0].split('-'))
+                else:
+                    d, m, y = map(int, rec_tgl_input.split()[0].split('/'))
+                if y == prev_year and m == prev_month_num and rec_channel == ch:
+                    prev_input += 1
+            except:
+                continue
+        mom_change = ((input_cnt - prev_input) / prev_input * 100) if prev_input > 0 else (100 if input_cnt > 0 else 0)
+        summary_chan.append({
+            "channel": ch,
+            "input": input_cnt,
+            "completed": completed,
+            "fallout": fallout,
+            "completion": completion_rate,
+            "contribution": (input_cnt / total_input_all_channels * 100) if total_input_all_channels > 0 else 0,
+            "mom": mom_change
+        })
+
+    lines2 = ["📊 *RINGKASAN PER CHANNEL*", f"📅 {month_name.upper()} {year}", ""]
+    lines2.append("```")
+    lines2.append(f"{'Channel':<18} {'Input':>7} {'Cmpl':>6} {'Flt':>5} {'IO/PS':>6} {'Kontrib':>8} {'MoM':>6}")
+    lines2.append("-" * 70)
+    for c in summary_chan:
+        lines2.append(f"{c['channel'][:16]:<16} {c['input']:>7} {c['completed']:>6} {c['fallout']:>5} {c['completion']:>5.1f}% {c['contribution']:>7.1f}% {c['mom']:>5.1f}%")
+    lines2.append("```")
+    await query.message.reply_text("\n".join(lines2), parse_mode="Markdown")
+
+    return ConversationHandler.END
+
+# ---------- DETAILED SALES REPORT (existing, unchanged) ----------
 async def sales_wok_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -652,6 +865,7 @@ async def sales_year_selected(update: Update, context: ContextTypes.DEFAULT_TYPE
     return SALES_MONTH
 
 async def sales_month_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Keep existing detailed report logic (unchanged)
     query = update.callback_query
     await query.answer()
     month_num = int(query.data.split("_")[1])
@@ -956,19 +1170,24 @@ def main():
     app.add_handler(CommandHandler("pending", pending))
     app.add_handler(CommandHandler("report", report))
 
-    # Sales report conversation
-    sales_conv = ConversationHandler(
-        entry_points=[CallbackQueryHandler(sales_report_start, pattern="^menu_sales_report$")],
+    # New sales report conversation (main menu)
+    sales_main_conv = ConversationHandler(
+        entry_points=[CallbackQueryHandler(sales_report_main, pattern="^menu_sales_report$")],
         states={
-            SALES_WOK: [CallbackQueryHandler(sales_wok_selected, pattern="^wok_")],
+            SALES_WOK: [CallbackQueryHandler(sales_choose, pattern="^(sales_detail|sales_summary|sales_back)$")],
             SALES_CHANNEL: [CallbackQueryHandler(sales_channel_selected, pattern="^chan_")],
             SALES_YEAR: [CallbackQueryHandler(sales_year_selected, pattern="^year_")],
             SALES_MONTH: [CallbackQueryHandler(sales_month_selected, pattern="^month_")],
+            SUMMARY_YEAR: [CallbackQueryHandler(summary_year_selected, pattern="^sumyear_")],
+            SUMMARY_MONTH: [CallbackQueryHandler(summary_month_selected, pattern="^summonth_")],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
         allow_reentry=True,
     )
-    app.add_handler(sales_conv)
+    app.add_handler(sales_main_conv)
+
+    # Additional callbacks for the new menu choices
+    app.add_handler(CallbackQueryHandler(sales_choose, pattern="^(sales_detail|sales_summary|sales_back)$"))
 
     # Single order conversation
     single_conv = ConversationHandler(
