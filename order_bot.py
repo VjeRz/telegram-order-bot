@@ -190,7 +190,8 @@ def get_main_menu_keyboard(telegram_id):
         [InlineKeyboardButton("🔍 Cek Order", callback_data="menu_single_order")],
         [InlineKeyboardButton("📦 Cek Banyak Order", callback_data="menu_bulk_order")],
     ]
-    if subrole == "Team Leader":
+    # Show sales report button for any role that can view sales reports
+    if can_view_sales_report(telegram_id):
         buttons.insert(1, [InlineKeyboardButton("📊 Cek Laporan Sales", callback_data="menu_sales_report")])
     buttons.append([InlineKeyboardButton("📖 Panduan Pengguna", callback_data="menu_guide")])
     return InlineKeyboardMarkup(buttons)
@@ -242,7 +243,7 @@ async def send_guide(update: Update, user_id):
         )
         await update.message.reply_text(text, parse_mode="Markdown")
         return
-    if subrole in ["Manager", "Supervisor", "HSA", "IT", "Team Leader"]:
+    if can_view_sales_report(user_id) or subrole in ["Manager", "Supervisor", "HSA", "IT"]:
         text = (
             f"📋 *Panduan Pengguna*\n\n"
             f"✅ Anda terdaftar sebagai {role_group} - {subrole}.\n\n"
@@ -250,9 +251,9 @@ async def send_guide(update: Update, user_id):
             "Klik tombol 'Cek Order', lalu masukkan satu Order ID.\n\n"
             "📦 *Cek Banyak Order*:\n"
             "Klik tombol 'Cek Banyak Order', lalu masukkan 2 hingga 10 Order ID (dipisah spasi).\n\n"
-            "📊 *Laporan Performa Sales* (khusus Team Leader):\n"
-            "Klik tombol 'Cek Laporan Sales' dan ikuti menu interaktif.\n\n"
-            "📎 Untuk laporan penggunaan bot, gunakan perintah /report.\n\n"
+            "📊 *Laporan Performa Sales*:\n"
+            "Klik tombol 'Cek Laporan Sales' dan ikuti menu interaktif (tersedia untuk Supervisor, Team Leader, IT, Manager).\n\n"
+            "📎 Untuk laporan penggunaan bot, gunakan perintah /report day|week|month|from to.\n\n"
             "Untuk daftar perintah lengkap, ketik /help."
         )
     else:
@@ -269,7 +270,7 @@ async def send_guide(update: Update, user_id):
         )
     await update.message.reply_text(text, parse_mode="Markdown")
 
-# ---------- REGISTRATION FLOW ----------
+# ---------- REGISTRATION FLOW (unchanged) ----------
 async def register_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.callback_query:
         query = update.callback_query
@@ -442,7 +443,6 @@ async def approval_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     data = query.data
-    # Split into exactly three parts: action, user_id, row_index
     parts = data.split("_", 2)
     if len(parts) != 3:
         logger.error(f"Invalid callback data: {data}")
@@ -665,7 +665,6 @@ async def sales_month_selected(update: Update, context: ContextTypes.DEFAULT_TYP
         if not rec_tanggal_input:
             continue
         try:
-            # Support both YYYY-MM-DD HH:MM:SS and DD/MM/YYYY HH:MM
             if '-' in rec_tanggal_input:
                 date_part = rec_tanggal_input.split()[0]
                 y, m, d = map(int, date_part.split('-'))
@@ -684,7 +683,6 @@ async def sales_month_selected(update: Update, context: ContextTypes.DEFAULT_TYP
     await query.delete_message()
     processing_msg = await query.message.reply_text("⏳ Sedang memproses data...")
 
-    # Roles that see aggregated summary for AGENCY channel
     aggregate_only_roles = ["Manager", "Supervisor", "Inputters", "IT"]
 
     if channel == "AGENCY" and subrole in aggregate_only_roles:
