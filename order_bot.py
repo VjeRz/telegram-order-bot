@@ -36,12 +36,10 @@ REG_SUBROLE = 5
 REG_WOK = 6
 REG_SFID = 7
 BULK_AWAITING_IDS = 10
-# Sales report states
 SALES_WOK = 20
 SALES_CHANNEL = 21
 SALES_YEAR = 22
 SALES_MONTH = 23
-# Summary states
 SUMMARY_YEAR = 30
 SUMMARY_MONTH = 31
 
@@ -156,7 +154,7 @@ def can_view_sales_report(telegram_id):
 
 def can_view_summary(telegram_id):
     _, subrole = get_user_role(telegram_id)
-    return subrole in ["Manager", "Supervisor", "IT"]  # IT added for debugging
+    return subrole in ["Manager", "Supervisor", "IT"]
 
 def log_usage(telegram_id, order_id):
     name, role_group, subrole = "", "", ""
@@ -575,9 +573,8 @@ async def process_bulk_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await update.message.reply_text(f"✅ Selesai. {len(found)} dari {len(order_ids)} Order ID berhasil ditemukan.")
     return ConversationHandler.END
 
-# ---------- NEW: SALES REPORT MAIN MENU (with Ringkasan option) ----------
+# ---------- SALES REPORT MAIN MENU (with Ringkasan) ----------
 async def sales_report_main(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Entry point for sales report: show options for detail or summary."""
     query = update.callback_query
     await query.answer()
     user_id = update.effective_user.id
@@ -585,7 +582,6 @@ async def sales_report_main(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.reply_text("Anda tidak memiliki akses ke laporan sales.")
         return ConversationHandler.END
 
-    # Build keyboard based on role
     keyboard = [
         [InlineKeyboardButton("📊 Laporan Detail (per WOK)", callback_data="sales_detail")],
     ]
@@ -594,14 +590,13 @@ async def sales_report_main(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard.append([InlineKeyboardButton("🔙 Kembali ke Menu Utama", callback_data="sales_back")])
 
     await query.message.reply_text("Pilih jenis laporan:", reply_markup=InlineKeyboardMarkup(keyboard))
-    return SALES_WOK  # stay in a waiting state; we'll handle via callback
+    return SALES_WOK
 
 async def sales_choose(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     data = query.data
     if data == "sales_detail":
-        # Start the old detailed flow (WOK selection)
         await query.message.delete()
         wok_keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton("MANADO TALAUD", callback_data="wok_MANADO TALAUD")],
@@ -613,7 +608,6 @@ async def sales_choose(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return SALES_WOK
     elif data == "sales_summary":
         await query.message.delete()
-        # Ask for year
         current_year = datetime.now().year
         year_keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton(str(current_year - 1), callback_data=f"sumyear_{current_year-1}"),
@@ -650,6 +644,10 @@ async def summary_year_selected(update: Update, context: ContextTypes.DEFAULT_TY
     await query.edit_message_text("Pilih bulan:", reply_markup=month_keyboard)
     return SUMMARY_MONTH
 
+def get_raw_records():
+    """Fetch raw records from sheet without caching for summary to ensure fresh data."""
+    return order_sheet.get_all_records()
+
 async def summary_month_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -659,27 +657,31 @@ async def summary_month_selected(update: Update, context: ContextTypes.DEFAULT_T
     month_name = month_names[month_num - 1]
     year = context.user_data.get("summary_year", datetime.now().year)
 
-    # Fetch records
-    records = get_order_sheet_records()
-    # Determine previous month for MoM
+    # Use fresh records to avoid cache issues
+    records = get_raw_records()
+    # Determine previous month (previous year if January)
     prev_month_num = month_num - 1 if month_num > 1 else 12
     prev_year = year if month_num > 1 else year - 1
 
-    # Helper to count for a given year/month and optional filter
-    def count_by_wok(wok_filter=None, channel_filter=None, status_filter=None):
+    # Helper to clean status: strip and upper
+    def clean_status(status):
+        return status.strip().upper() if status else ""
+
+    # Helper to count with optional filters
+    def count_orders(wok_filter=None, channel_filter=None, status_filter=None):
         total = 0
         for rec in records:
             rec_wok = rec.get("WOK", "")
             rec_channel = rec.get("Channel Name", "")
-            rec_status = rec.get("Status Order", "").upper()
-            rec_tgl_input = rec.get("Tanggal Input", "")
-            if not rec_tgl_input:
+            rec_status = clean_status(rec.get("Status Order", ""))
+            rec_tgl = rec.get("Tanggal Input", "")
+            if not rec_tgl:
                 continue
             try:
-                if '-' in rec_tgl_input:
-                    y, m, d = map(int, rec_tgl_input.split()[0].split('-'))
+                if '-' in rec_tgl:
+                    y, m, d = map(int, rec_tgl.split()[0].split('-'))
                 else:
-                    d, m, y = map(int, rec_tgl_input.split()[0].split('/'))
+                    d, m, y = map(int, rec_tgl.split()[0].split('/'))
                 if y == year and m == month_num:
                     if wok_filter and rec_wok != wok_filter:
                         continue
@@ -692,20 +694,25 @@ async def summary_month_selected(update: Update, context: ContextTypes.DEFAULT_T
                 continue
         return total
 
-    def count_prev_wok(wok, status=None):
+    def count_prev(wok=None, channel=None, status=None):
         total = 0
         for rec in records:
             rec_wok = rec.get("WOK", "")
-            rec_status = rec.get("Status Order", "").upper()
-            rec_tgl_input = rec.get("Tanggal Input", "")
-            if not rec_tgl_input:
+            rec_channel = rec.get("Channel Name", "")
+            rec_status = clean_status(rec.get("Status Order", ""))
+            rec_tgl = rec.get("Tanggal Input", "")
+            if not rec_tgl:
                 continue
             try:
-                if '-' in rec_tgl_input:
-                    y, m, d = map(int, rec_tgl_input.split()[0].split('-'))
+                if '-' in rec_tgl:
+                    y, m, d = map(int, rec_tgl.split()[0].split('-'))
                 else:
-                    d, m, y = map(int, rec_tgl_input.split()[0].split('/'))
-                if y == prev_year and m == prev_month_num and rec_wok == wok:
+                    d, m, y = map(int, rec_tgl.split()[0].split('/'))
+                if y == prev_year and m == prev_month_num:
+                    if wok and rec_wok != wok:
+                        continue
+                    if channel and rec_channel != channel:
+                        continue
                     if status and rec_status != status:
                         continue
                     total += 1
@@ -713,16 +720,16 @@ async def summary_month_selected(update: Update, context: ContextTypes.DEFAULT_T
                 continue
         return total
 
-    # Collect data per WOK (unique WOK values from sheet)
+    # Collect per WOK
     wok_list = ["MANADO TALAUD", "BOLAANG MONGONDOW", "GORONTALO - PAHUWATO", "BITUNG MINAHASA"]
     summary_wok = []
     total_input_all = 0
     for wok in wok_list:
-        input_cnt = count_by_wok(wok_filter=wok)
+        input_cnt = count_orders(wok_filter=wok)
         total_input_all += input_cnt
-        completed = count_by_wok(wok_filter=wok, status_filter="COMPLETED")
-        fallout = count_by_wok(wok_filter=wok, status_filter="FALLOUT")
-        prev_input = count_prev_wok(wok)
+        completed = count_orders(wok_filter=wok, status_filter="COMPLETED")
+        fallout = count_orders(wok_filter=wok, status_filter="FALLOUT")
+        prev_input = count_prev(wok=wok)
         mom_change = ((input_cnt - prev_input) / prev_input * 100) if prev_input > 0 else (100 if input_cnt > 0 else 0)
         completion_rate = (completed / input_cnt * 100) if input_cnt > 0 else 0
         summary_wok.append({
@@ -731,7 +738,7 @@ async def summary_month_selected(update: Update, context: ContextTypes.DEFAULT_T
             "completed": completed,
             "fallout": fallout,
             "completion": completion_rate,
-            "contribution": input_cnt,  # will normalize after total known
+            "contribution": input_cnt,
             "mom": mom_change
         })
 
@@ -739,7 +746,7 @@ async def summary_month_selected(update: Update, context: ContextTypes.DEFAULT_T
     for w in summary_wok:
         w["contribution"] = (w["input"] / total_input_all * 100) if total_input_all > 0 else 0
 
-    # First message: per WOK table
+    # Message 1: per WOK
     lines1 = ["📊 *RINGKASAN PER WOK*", f"📅 {month_name.upper()} {year}", ""]
     lines1.append("```")
     lines1.append(f"{'WOK':<22} {'Input':>7} {'Cmpl':>6} {'Flt':>5} {'IO/PS':>6} {'Kontrib':>8} {'MoM':>6}")
@@ -749,34 +756,18 @@ async def summary_month_selected(update: Update, context: ContextTypes.DEFAULT_T
     lines1.append("```")
     await query.message.reply_text("\n".join(lines1), parse_mode="Markdown")
 
-    # Second message: per Channel (aggregated across all WOKs)
+    # Message 2: per Channel
     channels = ["B2B2C&OTHERS", "AGENCY", "GRAPARI", "SOBI AFFILIATE", "WEB&APP"]
     total_input_all_channels = 0
     summary_chan = []
     for ch in channels:
-        input_cnt = count_by_wok(channel_filter=ch)
+        input_cnt = count_orders(channel_filter=ch)
         total_input_all_channels += input_cnt
-        completed = count_by_wok(channel_filter=ch, status_filter="COMPLETED")
-        fallout = count_by_wok(channel_filter=ch, status_filter="FALLOUT")
-        completion_rate = (completed / input_cnt * 100) if input_cnt > 0 else 0
-        # MoM for channel not easily done without additional data; we'll skip or compute similarly
-        # For simplicity, we'll compute the previous month counts for the same channel
-        prev_input = 0
-        for rec in records:
-            rec_channel = rec.get("Channel Name", "")
-            rec_tgl_input = rec.get("Tanggal Input", "")
-            if not rec_tgl_input:
-                continue
-            try:
-                if '-' in rec_tgl_input:
-                    y, m, d = map(int, rec_tgl_input.split()[0].split('-'))
-                else:
-                    d, m, y = map(int, rec_tgl_input.split()[0].split('/'))
-                if y == prev_year and m == prev_month_num and rec_channel == ch:
-                    prev_input += 1
-            except:
-                continue
+        completed = count_orders(channel_filter=ch, status_filter="COMPLETED")
+        fallout = count_orders(channel_filter=ch, status_filter="FALLOUT")
+        prev_input = count_prev(channel=ch)
         mom_change = ((input_cnt - prev_input) / prev_input * 100) if prev_input > 0 else (100 if input_cnt > 0 else 0)
+        completion_rate = (completed / input_cnt * 100) if input_cnt > 0 else 0
         summary_chan.append({
             "channel": ch,
             "input": input_cnt,
@@ -795,10 +786,9 @@ async def summary_month_selected(update: Update, context: ContextTypes.DEFAULT_T
         lines2.append(f"{c['channel'][:16]:<16} {c['input']:>7} {c['completed']:>6} {c['fallout']:>5} {c['completion']:>5.1f}% {c['contribution']:>7.1f}% {c['mom']:>5.1f}%")
     lines2.append("```")
     await query.message.reply_text("\n".join(lines2), parse_mode="Markdown")
-
     return ConversationHandler.END
 
-# ---------- DETAILED SALES REPORT (existing, unchanged) ----------
+# ---------- DETAILED SALES REPORT (unchanged) ----------
 async def sales_wok_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -865,7 +855,7 @@ async def sales_year_selected(update: Update, context: ContextTypes.DEFAULT_TYPE
     return SALES_MONTH
 
 async def sales_month_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Keep existing detailed report logic (unchanged)
+    # This is the detailed report (unchanged from previous working version)
     query = update.callback_query
     await query.answer()
     month_num = int(query.data.split("_")[1])
@@ -912,7 +902,7 @@ async def sales_month_selected(update: Update, context: ContextTypes.DEFAULT_TYP
         total = 0
         for rec in filtered:
             total += 1
-            status = rec.get("Status Order", "").upper()
+            status = rec.get("Status Order", "").upper().strip()
             if status in status_counts:
                 status_counts[status] += 1
             else:
@@ -939,7 +929,7 @@ async def sales_month_selected(update: Update, context: ContextTypes.DEFAULT_TYP
             sf = rec.get("SalesForce", "").strip()
             if not sf:
                 continue
-            status = rec.get("Status Order", "").upper()
+            status = rec.get("Status Order", "").upper().strip()
             if sf not in sales_dict:
                 sales_dict[sf] = {"total": 0}
                 for s in ALL_STATUSES:
@@ -1022,7 +1012,7 @@ async def sales_month_selected(update: Update, context: ContextTypes.DEFAULT_TYP
         total = 0
         for rec in filtered:
             total += 1
-            status = rec.get("Status Order", "").upper()
+            status = rec.get("Status Order", "").upper().strip()
             if status in status_counts:
                 status_counts[status] += 1
             else:
@@ -1151,7 +1141,6 @@ def main():
         logger.info("No proxy URL set")
     app = builder.build()
 
-    # Registration conversation
     reg_conv = ConversationHandler(
         entry_points=[CommandHandler("register", register_start), CallbackQueryHandler(register_start, pattern="^menu_register$")],
         states={
@@ -1170,7 +1159,7 @@ def main():
     app.add_handler(CommandHandler("pending", pending))
     app.add_handler(CommandHandler("report", report))
 
-    # New sales report conversation (main menu)
+    # Sales report conversation (main)
     sales_main_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(sales_report_main, pattern="^menu_sales_report$")],
         states={
@@ -1185,8 +1174,6 @@ def main():
         allow_reentry=True,
     )
     app.add_handler(sales_main_conv)
-
-    # Additional callbacks for the new menu choices
     app.add_handler(CallbackQueryHandler(sales_choose, pattern="^(sales_detail|sales_summary|sales_back)$"))
 
     # Single order conversation
