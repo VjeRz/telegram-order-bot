@@ -27,8 +27,6 @@ BOT_DATA_SHEET_NAME = os.environ.get("BOT_DATA_SHEET_NAME", "Bot_Data")
 CLOUDFLARE_WORKER_URL = os.environ.get("CLOUDFLARE_WORKER_URL", "")
 IT_TELEGRAM_ID = int(os.environ.get("IT_TELEGRAM_ID", "0"))
 
-TIMEOUT_SECONDS = 180  # 3 minutes
-
 # Conversation states
 WAITING_FOR_SINGLE_ORDER = 1
 REG_NAME = 2
@@ -185,34 +183,6 @@ async def notify_approver(bot, user_id, name, role_group, subrole, wok="", sfid=
         text += f"\nUser ID: {user_id}"
         await bot.send_message(chat_id=IT_TELEGRAM_ID, text=text, reply_markup=keyboard)
 
-# ---------- TIMEOUT HELPER ----------
-async def schedule_timeout(context: ContextTypes.DEFAULT_TYPE, chat_id: int, user_id: int, state: int):
-    if 'timeout_job' in context.chat_data:
-        context.chat_data['timeout_job'].schedule_removal()
-    job = context.job_queue.run_once(
-        lambda ctx: timeout_callback(ctx, chat_id, user_id),
-        TIMEOUT_SECONDS,
-        data={'chat_id': chat_id, 'user_id': user_id, 'state': state}
-    )
-    context.chat_data['timeout_job'] = job
-
-async def timeout_callback(context: ContextTypes.DEFAULT_TYPE, chat_id: int, user_id: int):
-    await context.bot.send_message(chat_id=chat_id, text="⏰ Tidak ada respons. Kembali ke menu utama.")
-    await show_main_menu_by_chat_id(context.bot, chat_id, user_id)
-
-async def show_main_menu_by_chat_id(bot, chat_id: int, user_id: int):
-    if is_user_approved(user_id):
-        text = "Selamat datang! Silakan pilih menu:"
-        keyboard = get_main_menu_keyboard(user_id)
-        await bot.send_message(chat_id=chat_id, text=text, reply_markup=keyboard)
-    else:
-        text = "Anda belum terdaftar. Silakan daftar terlebih dahulu."
-        keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("📝 Daftar", callback_data="menu_register")],
-            [InlineKeyboardButton("📖 Panduan Pengguna", callback_data="menu_guide")]
-        ])
-        await bot.send_message(chat_id=chat_id, text=text, reply_markup=keyboard)
-
 # ---------- MAIN MENU ----------
 def get_main_menu_keyboard(telegram_id):
     _, subrole = get_user_role(telegram_id)
@@ -245,11 +215,9 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if data == "menu_register":
         await query.message.delete()
-        # Start registration conversation – we call register_start with the callback query
         await register_start(update, context)
     elif data == "menu_single_order":
         await query.message.delete()
-        # Send the prompt now, then use conversation
         await single_order_start(update, context)
     elif data == "menu_bulk_order":
         await query.message.delete()
@@ -281,8 +249,7 @@ async def send_guide(update: Update, user_id):
             "🔍 *Cek Order (satu)*:\n"
             "Klik tombol 'Cek Order', lalu masukkan satu Order ID.\n\n"
             "📦 *Cek Banyak Order*:\n"
-            "Klik tombol 'Cek Banyak Order', lalu masukkan 2 hingga 10 Order ID (dipisah spasi).\n"
-            "Anda punya waktu 3 menit untuk mengirimkan ID.\n\n"
+            "Klik tombol 'Cek Banyak Order', lalu masukkan 2 hingga 10 Order ID (dipisah spasi).\n\n"
             "📊 *Laporan Performa Sales* (khusus Team Leader):\n"
             "Klik tombol 'Cek Laporan Sales' dan ikuti menu interaktif.\n\n"
             "📎 Untuk laporan penggunaan bot, gunakan perintah /report.\n\n"
@@ -295,27 +262,24 @@ async def send_guide(update: Update, user_id):
             "🔍 *Cek Order (satu)*:\n"
             "Klik tombol 'Cek Order', lalu masukkan satu Order ID.\n\n"
             "📦 *Cek Banyak Order*:\n"
-            "Klik tombol 'Cek Banyak Order', lalu masukkan 2 hingga 10 Order ID (dipisah spasi).\n"
-            "Anda punya waktu 3 menit untuk mengirimkan ID.\n\n"
+            "Klik tombol 'Cek Banyak Order', lalu masukkan 2 hingga 10 Order ID (dipisah spasi).\n\n"
             "📊 *Laporan*:\n"
             "Laporan hanya tersedia untuk Supervisor, Manager, HSA, IT, dan Team Leader.\n\n"
             "Untuk daftar perintah lengkap, ketik /help."
         )
     await update.message.reply_text(text, parse_mode="Markdown")
 
-# ---------- REGISTRATION FLOW (with timeout) ----------
+# ---------- REGISTRATION FLOW ----------
 async def register_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Determine if we were called from a callback query
     if update.callback_query:
-        # Called from inline button – use the query's message to reply
         query = update.callback_query
         await query.answer()
-        chat_id = query.message.chat_id
-        user_id = query.from_user.id
         send_func = query.message.reply_text
+        user_id = query.from_user.id
     else:
-        user_id = update.effective_user.id
         send_func = update.message.reply_text
+        user_id = update.effective_user.id
 
     if is_user_approved(user_id):
         await send_func("Anda sudah terdaftar dan disetujui.")
@@ -326,22 +290,14 @@ async def register_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await send_func("Anda sudah memiliki pendaftaran yang menunggu persetujuan. Mohon tunggu.")
             return ConversationHandler.END
     await send_func("Selamat datang! Mari daftar.\n\nMasukkan nama lengkap Anda:")
-    # We need the chat_id for timeout; we can get from update.effective_chat or from query.
-    chat_id = update.effective_chat.id if update.effective_chat else query.message.chat_id
-    await schedule_timeout(context, chat_id, user_id, REG_NAME)
     return REG_NAME
 
 async def reg_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if 'timeout_job' in context.chat_data:
-        context.chat_data['timeout_job'].schedule_removal()
     context.user_data["reg_name"] = update.message.text
     await update.message.reply_text("Masukkan alamat email Anda:")
-    await schedule_timeout(context, update.effective_chat.id, update.effective_user.id, REG_EMAIL)
     return REG_EMAIL
 
 async def reg_email(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if 'timeout_job' in context.chat_data:
-        context.chat_data['timeout_job'].schedule_removal()
     context.user_data["reg_email"] = update.message.text
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("Agency", callback_data="group_Agency")],
@@ -349,12 +305,9 @@ async def reg_email(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("Technician", callback_data="group_Technician")]
     ])
     await update.message.reply_text("Pilih grup peran Anda:", reply_markup=keyboard)
-    await schedule_timeout(context, update.effective_chat.id, update.effective_user.id, REG_ROLE_GROUP)
     return REG_ROLE_GROUP
 
 async def reg_role_group(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if 'timeout_job' in context.chat_data:
-        context.chat_data['timeout_job'].schedule_removal()
     query = update.callback_query
     await query.answer()
     group = query.data.split("_")[1]
@@ -377,12 +330,9 @@ async def reg_role_group(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("HSA", callback_data="sub_HSA")]
         ])
     await query.edit_message_text("Pilih sub-peran Anda:", reply_markup=keyboard)
-    await schedule_timeout(context, update.effective_chat.id, update.effective_user.id, REG_SUBROLE)
     return REG_SUBROLE
 
 async def reg_subrole(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if 'timeout_job' in context.chat_data:
-        context.chat_data['timeout_job'].schedule_removal()
     query = update.callback_query
     await query.answer()
     sub = query.data.split("_")[1]
@@ -402,33 +352,25 @@ async def reg_subrole(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("Gorontalo", callback_data="wok_Gorontalo")]
         ])
         await query.edit_message_text("Pilih WOK (Working Area):", reply_markup=wok_keyboard)
-        await schedule_timeout(context, update.effective_chat.id, update.effective_user.id, REG_WOK)
         return REG_WOK
     else:
         await query.edit_message_text("Pendaftaran selesai. Menyimpan data...")
         return await save_registration(update, context, skip_wok_sfid=True)
 
 async def reg_wok(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if 'timeout_job' in context.chat_data:
-        context.chat_data['timeout_job'].schedule_removal()
     query = update.callback_query
     await query.answer()
     wok = query.data.split("_")[1]
     context.user_data["reg_wok"] = wok
     await query.edit_message_text("Masukkan SF ID:")
-    await schedule_timeout(context, update.effective_chat.id, update.effective_user.id, REG_SFID)
     return REG_SFID
 
 async def reg_sfid(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if 'timeout_job' in context.chat_data:
-        context.chat_data['timeout_job'].schedule_removal()
     sfid = update.message.text.strip()
     context.user_data["reg_sfid"] = sfid
     return await save_registration(update, context, skip_wok_sfid=False)
 
 async def save_registration(update: Update, context: ContextTypes.DEFAULT_TYPE, skip_wok_sfid=False):
-    if 'timeout_job' in context.chat_data:
-        context.chat_data['timeout_job'].schedule_removal()
     if isinstance(update, Update) and update.callback_query:
         await update.callback_query.edit_message_text("Menyimpan data registrasi...")
         effective_user = update.callback_query.from_user
@@ -519,7 +461,6 @@ async def approval_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ---------- SINGLE ORDER ----------
 async def single_order_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Called from callback query
     query = update.callback_query
     await query.answer()
     user_id = update.effective_user.id
@@ -527,12 +468,9 @@ async def single_order_start(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await query.message.reply_text("Anda belum terdaftar atau belum disetujui. Silakan gunakan tombol Daftar.")
         return ConversationHandler.END
     await query.message.reply_text("Masukkan Order ID (contoh: AOs326032509275620607db90):")
-    await schedule_timeout(context, query.message.chat_id, user_id, WAITING_FOR_SINGLE_ORDER)
     return WAITING_FOR_SINGLE_ORDER
 
 async def receive_single_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if 'timeout_job' in context.chat_data:
-        context.chat_data['timeout_job'].schedule_removal()
     user_id = update.effective_user.id
     raw_input = update.message.text
     order_id = clean_text(raw_input)
@@ -545,7 +483,6 @@ async def receive_single_order(update: Update, context: ContextTypes.DEFAULT_TYP
             f"Silakan coba lagi dengan Order ID lain."
         )
         await update.message.reply_text(error_msg)
-        await schedule_timeout(context, update.effective_chat.id, user_id, WAITING_FOR_SINGLE_ORDER)
         return WAITING_FOR_SINGLE_ORDER
     log_usage(user_id, order_id)
     reply = (
@@ -564,7 +501,7 @@ async def receive_single_order(update: Update, context: ContextTypes.DEFAULT_TYP
     await update.message.reply_text(reply)
     return ConversationHandler.END
 
-# ---------- BULK ORDER WITH TIMEOUT ----------
+# ---------- BULK ORDER ----------
 async def bulk_order_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -575,22 +512,17 @@ async def bulk_order_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.message.reply_text(
         "Masukkan 2 hingga 10 Order ID dalam satu pesan.\n"
         "Pisahkan dengan spasi.\n\n"
-        "Contoh: AOi123 AOi456 AOi789\n\n"
-        "Anda memiliki waktu 3 menit. Jika tidak ada respons, proses akan dibatalkan."
+        "Contoh: AOi123 AOi456 AOi789"
     )
-    await schedule_timeout(context, query.message.chat_id, user_id, BULK_AWAITING_IDS)
     return BULK_AWAITING_IDS
 
 async def process_bulk_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if 'timeout_job' in context.chat_data:
-        context.chat_data['timeout_job'].schedule_removal()
     user_id = update.effective_user.id
     raw_text = update.message.text.strip()
     order_ids = re.split(r'\s+', raw_text)
     order_ids = [clean_text(oid) for oid in order_ids if oid]
     if len(order_ids) < 2 or len(order_ids) > 10:
         await update.message.reply_text("Jumlah Order ID harus antara 2 dan 10. Silakan coba lagi.")
-        await schedule_timeout(context, update.effective_chat.id, user_id, BULK_AWAITING_IDS)
         return BULK_AWAITING_IDS
     found = []
     not_found = []
@@ -636,12 +568,9 @@ async def sales_report_start(update: Update, context: ContextTypes.DEFAULT_TYPE)
         [InlineKeyboardButton("BITUNG MINAHASA", callback_data="wok_BITUNG MINAHASA")]
     ])
     await query.message.reply_text("Pilih WOK:", reply_markup=wok_keyboard)
-    await schedule_timeout(context, query.message.chat_id, user_id, SALES_WOK)
     return SALES_WOK
 
 async def sales_wok_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if 'timeout_job' in context.chat_data:
-        context.chat_data['timeout_job'].schedule_removal()
     query = update.callback_query
     await query.answer()
     wok = query.data.split("_", 1)[1]
@@ -659,7 +588,6 @@ async def sales_wok_selected(update: Update, context: ContextTypes.DEFAULT_TYPE)
              InlineKeyboardButton(str(current_year), callback_data=f"year_{current_year}")]
         ])
         await query.edit_message_text("Pilih tahun:", reply_markup=year_keyboard)
-        await schedule_timeout(context, update.effective_chat.id, user_id, SALES_YEAR)
         return SALES_YEAR
     else:
         channel_keyboard = InlineKeyboardMarkup([
@@ -670,12 +598,9 @@ async def sales_wok_selected(update: Update, context: ContextTypes.DEFAULT_TYPE)
             [InlineKeyboardButton("WEB&APP", callback_data="chan_WEB&APP")]
         ])
         await query.edit_message_text("Pilih Channel:", reply_markup=channel_keyboard)
-        await schedule_timeout(context, update.effective_chat.id, user_id, SALES_CHANNEL)
         return SALES_CHANNEL
 
 async def sales_channel_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if 'timeout_job' in context.chat_data:
-        context.chat_data['timeout_job'].schedule_removal()
     query = update.callback_query
     await query.answer()
     channel = query.data.split("_", 1)[1]
@@ -686,12 +611,9 @@ async def sales_channel_selected(update: Update, context: ContextTypes.DEFAULT_T
          InlineKeyboardButton(str(current_year), callback_data=f"year_{current_year}")]
     ])
     await query.edit_message_text("Pilih tahun:", reply_markup=year_keyboard)
-    await schedule_timeout(context, update.effective_chat.id, update.effective_user.id, SALES_YEAR)
     return SALES_YEAR
 
 async def sales_year_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if 'timeout_job' in context.chat_data:
-        context.chat_data['timeout_job'].schedule_removal()
     query = update.callback_query
     await query.answer()
     year = int(query.data.split("_")[1])
@@ -711,12 +633,9 @@ async def sales_year_selected(update: Update, context: ContextTypes.DEFAULT_TYPE
          InlineKeyboardButton("Desember", callback_data="month_12")]
     ])
     await query.edit_message_text("Pilih bulan:", reply_markup=month_keyboard)
-    await schedule_timeout(context, update.effective_chat.id, update.effective_user.id, SALES_MONTH)
     return SALES_MONTH
 
 async def sales_month_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if 'timeout_job' in context.chat_data:
-        context.chat_data['timeout_job'].schedule_removal()
     query = update.callback_query
     await query.answer()
     month_num = int(query.data.split("_")[1])
@@ -755,9 +674,11 @@ async def sales_month_selected(update: Update, context: ContextTypes.DEFAULT_TYP
     await query.delete_message()
     processing_msg = await query.message.reply_text("⏳ Sedang memproses data...")
 
+    # Roles that see aggregated summary for AGENCY channel
     aggregate_only_roles = ["Manager", "Supervisor", "Inputters", "IT"]
 
     if channel == "AGENCY" and subrole in aggregate_only_roles:
+        # Aggregate by status
         status_counts = {s: 0 for s in ALL_STATUSES}
         status_counts["OTHER"] = 0
         total = 0
@@ -785,6 +706,7 @@ async def sales_month_selected(update: Update, context: ContextTypes.DEFAULT_TYP
         return ConversationHandler.END
 
     if channel == "AGENCY":
+        # Per‑salesperson breakdown
         sales_dict = {}
         for rec in filtered:
             sf = rec.get("SalesForce", "").strip()
@@ -848,6 +770,7 @@ async def sales_month_selected(update: Update, context: ContextTypes.DEFAULT_TYP
                     chunk_text = base_text + "\n".join(current_chunk)
                     await query.message.reply_text(chunk_text)
             else:
+                # For other roles (IT, HSA, etc.) show per‑salesperson summary without order list
                 lines = [f"👤 {sf}", f"   🔢 Total Order: {data['total']}"]
                 status_summary = []
                 for s in ALL_STATUSES:
@@ -868,6 +791,7 @@ async def sales_month_selected(update: Update, context: ContextTypes.DEFAULT_TYP
                 await query.message.reply_text("\n".join(lines))
         await query.message.reply_text("✅ Selesai. Terima kasih.")
     else:
+        # Non‑AGENCY channels: aggregated totals by status
         status_counts = {s: 0 for s in ALL_STATUSES}
         status_counts["OTHER"] = 0
         total = 0
@@ -968,8 +892,6 @@ async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ---------- GENERAL COMMANDS ----------
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if 'timeout_job' in context.chat_data:
-        context.chat_data['timeout_job'].schedule_removal()
     await update.message.reply_text("Perintah dibatalkan. Kembali ke menu utama.")
     await show_main_menu(update, update.effective_user.id)
     return ConversationHandler.END
