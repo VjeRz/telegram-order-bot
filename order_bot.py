@@ -442,15 +442,20 @@ async def approval_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     data = query.data
-    # Use rsplit to split into two parts: action and the rest (which contains user_id and row_index separated by _)
-    parts = data.split("_", 2)  # splits into ['approve', 'telegram_id', 'row_index']
+    # Split into exactly three parts: action, user_id, row_index
+    parts = data.split("_", 2)
     if len(parts) != 3:
         logger.error(f"Invalid callback data: {data}")
         await query.edit_message_text("Terjadi kesalahan. Silakan coba lagi.")
         return
     action = parts[0]
-    target_id = int(parts[1])
-    row_index = int(parts[2])
+    try:
+        target_id = int(parts[1])
+        row_index = int(parts[2])
+    except ValueError:
+        logger.error(f"Invalid numbers in callback data: {parts}")
+        await query.edit_message_text("Terjadi kesalahan. Silakan coba lagi.")
+        return
 
     if action == "approve":
         users_sheet.update_cell(row_index, 6, "approved")
@@ -660,6 +665,7 @@ async def sales_month_selected(update: Update, context: ContextTypes.DEFAULT_TYP
         if not rec_tanggal_input:
             continue
         try:
+            # Support both YYYY-MM-DD HH:MM:SS and DD/MM/YYYY HH:MM
             if '-' in rec_tanggal_input:
                 date_part = rec_tanggal_input.split()[0]
                 y, m, d = map(int, date_part.split('-'))
