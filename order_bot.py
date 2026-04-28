@@ -638,7 +638,6 @@ async def detail_wok_selected(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     aggregate_only_roles = ["Manager", "Supervisor", "Inputters", "IT"]
     if subrole in aggregate_only_roles:
-        # Skip channel selection, go directly to year
         current_year = datetime.now().year
         year_keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton(str(current_year - 1), callback_data=f"year_{current_year-1}"),
@@ -647,7 +646,6 @@ async def detail_wok_selected(update: Update, context: ContextTypes.DEFAULT_TYPE
         await query.edit_message_text("Pilih tahun:", reply_markup=year_keyboard)
         return SALES_YEAR
     else:
-        # For Team Leader (and other non‑aggregate roles), go to channel selection
         channel_keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton("B2B2C&OTHERS", callback_data="chan_B2B2C&OTHERS")],
             [InlineKeyboardButton("AGENCY", callback_data="chan_AGENCY")],
@@ -707,10 +705,8 @@ async def sales_month_selected(update: Update, context: ContextTypes.DEFAULT_TYP
 
     aggregate_only_roles = ["Manager", "Supervisor", "Inputters", "IT"]
 
-    # If the user is in aggregate_only_roles, we show the status breakdown with percentages.
     if subrole in aggregate_only_roles:
         records = get_raw_records()
-        # Filter by WOK, year, month
         filtered = []
         for rec in records:
             rec_wok = rec.get("WOK", "")
@@ -738,7 +734,6 @@ async def sales_month_selected(update: Update, context: ContextTypes.DEFAULT_TYP
         await query.delete_message()
         processing_msg = await query.message.reply_text("⏳ Sedang memproses data...")
 
-        # Count statuses
         status_counts = {s: 0 for s in ALL_STATUSES}
         status_counts["OTHER"] = 0
         total = 0
@@ -769,7 +764,7 @@ async def sales_month_selected(update: Update, context: ContextTypes.DEFAULT_TYP
         await processing_msg.edit_text("\n".join(lines))
         return ConversationHandler.END
 
-    # Otherwise (Team Leader), continue with the original detailed logic (per-salesperson)
+    # Team Leader flow (original)
     records = get_order_sheet_records()
     filtered = []
     for rec in records:
@@ -861,7 +856,6 @@ async def sales_month_selected(update: Update, context: ContextTypes.DEFAULT_TYP
                     chunk_text = base_text + "\n".join(current_chunk)
                     await query.message.reply_text(chunk_text)
             else:
-                # Not used for Team Leader, but keep
                 lines = [f"👤 {sf}", f"   🔢 Total Order: {data['total']}"]
                 status_summary = []
                 for s in ALL_STATUSES:
@@ -908,7 +902,7 @@ async def sales_month_selected(update: Update, context: ContextTypes.DEFAULT_TYP
         await processing_msg.edit_text("\n".join(lines))
     return ConversationHandler.END
 
-# ---------- SUMMARY REPORT (Overall + per WOK channel tables) ----------
+# ---------- SUMMARY REPORT (with bullet list format) ----------
 async def summary_year_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -959,7 +953,7 @@ async def summary_month_selected(update: Update, context: ContextTypes.DEFAULT_T
             pass
         return None, None
 
-    # ----- 1. per WOK table -----
+    # ----- 1. per WOK summary (list format) -----
     wok_list = ["MANADO TALAUD", "BOLAANG MONGONDOW", "GORONTALO - PAHUWATO", "BITUNG MINAHASA"]
     wok_stats = {}
     total_input = 0
@@ -993,7 +987,7 @@ async def summary_month_selected(update: Update, context: ContextTypes.DEFAULT_T
                 wok_stats[wok] = {"input": 0, "completed": 0, "fallout": 0, "prev_input": 0}
             wok_stats[wok]["prev_input"] += 1
 
-    table_wok = []
+    lines1 = [f"📊 *RINGKASAN PER WOK*", f"📅 {month_name.upper()} {year}", ""]
     for wok in wok_list:
         stats = wok_stats.get(wok, {"input": 0, "completed": 0, "fallout": 0, "prev_input": 0})
         inp = stats["input"]
@@ -1003,32 +997,14 @@ async def summary_month_selected(update: Update, context: ContextTypes.DEFAULT_T
         completion = (comp / inp * 100) if inp > 0 else 0
         contrib = (inp / total_input * 100) if total_input > 0 else 0
         mom = ((inp - prev) / prev * 100) if prev > 0 else (100 if inp > 0 else 0)
-        table_wok.append({
-            "wok": wok,
-            "input": inp,
-            "completed": comp,
-            "fallout": flt,
-            "completion": completion,
-            "contrib": contrib,
-            "mom": mom
-        })
-
+        lines1.append(f"• *{wok}*: Input {inp} | Cmpl {comp} | Flt {flt} | IO/PS {completion:.1f}% | Kontrib {contrib:.1f}% | MoM {mom:.1f}%")
     total_completion = (total_completed / total_input * 100) if total_input > 0 else 0
     total_prev = sum(stats.get("prev_input", 0) for stats in wok_stats.values())
     total_mom = ((total_input - total_prev) / total_prev * 100) if total_prev > 0 else (100 if total_input > 0 else 0)
-
-    lines1 = ["📊 *RINGKASAN PER WOK*", f"📅 {month_name.upper()} {year}", ""]
-    lines1.append("```")
-    lines1.append(f"{'WOK':<22} {'Input':>7} {'Cmpl':>6} {'Flt':>5} {'IO/PS':>6} {'Kontrib':>8} {'MoM':>6}")
-    lines1.append("-" * 70)
-    for row in table_wok:
-        lines1.append(f"{row['wok'][:20]:<20} {row['input']:>7} {row['completed']:>6} {row['fallout']:>5} {row['completion']:>5.1f}% {row['contrib']:>7.1f}% {row['mom']:>5.1f}%")
-    lines1.append("-" * 70)
-    lines1.append(f"{'TOTAL':<20} {total_input:>7} {total_completed:>6} {total_fallout:>5} {total_completion:>5.1f}% {'100.0':>7}% {total_mom:>5.1f}%")
-    lines1.append("```")
+    lines1.append(f"\n• *TOTAL*: Input {total_input} | Cmpl {total_completed} | Flt {total_fallout} | IO/PS {total_completion:.1f}% | Kontrib 100.0% | MoM {total_mom:.1f}%")
     await query.message.reply_text("\n".join(lines1), parse_mode="Markdown")
 
-    # ----- 2. overall per channel table -----
+    # ----- 2. overall per channel summary (list format) -----
     channels = ["B2B2C&OTHERS", "AGENCY", "GRAPARI", "SOBI AFFILIATE", "WEB&APP"]
     chan_stats = {}
     total_chan_input = 0
@@ -1062,7 +1038,7 @@ async def summary_month_selected(update: Update, context: ContextTypes.DEFAULT_T
                 chan_stats[channel] = {"input": 0, "completed": 0, "fallout": 0, "prev_input": 0}
             chan_stats[channel]["prev_input"] += 1
 
-    table_chan = []
+    lines2 = [f"📊 *RINGKASAN PER CHANNEL*", f"📅 {month_name.upper()} {year}", ""]
     for ch in channels:
         stats = chan_stats.get(ch, {"input": 0, "completed": 0, "fallout": 0, "prev_input": 0})
         inp = stats["input"]
@@ -1072,32 +1048,14 @@ async def summary_month_selected(update: Update, context: ContextTypes.DEFAULT_T
         completion = (comp / inp * 100) if inp > 0 else 0
         contrib = (inp / total_chan_input * 100) if total_chan_input > 0 else 0
         mom = ((inp - prev) / prev * 100) if prev > 0 else (100 if inp > 0 else 0)
-        table_chan.append({
-            "channel": ch,
-            "input": inp,
-            "completed": comp,
-            "fallout": flt,
-            "completion": completion,
-            "contrib": contrib,
-            "mom": mom
-        })
-
+        lines2.append(f"• *{ch}*: Input {inp} | Cmpl {comp} | Flt {flt} | IO/PS {completion:.1f}% | Kontrib {contrib:.1f}% | MoM {mom:.1f}%")
     total_chan_completion = (total_chan_completed / total_chan_input * 100) if total_chan_input > 0 else 0
     total_chan_prev = sum(stats.get("prev_input", 0) for stats in chan_stats.values())
     total_chan_mom = ((total_chan_input - total_chan_prev) / total_chan_prev * 100) if total_chan_prev > 0 else (100 if total_chan_input > 0 else 0)
-
-    lines2 = ["📊 *RINGKASAN PER CHANNEL*", f"📅 {month_name.upper()} {year}", ""]
-    lines2.append("```")
-    lines2.append(f"{'Channel':<18} {'Input':>7} {'Cmpl':>6} {'Flt':>5} {'IO/PS':>6} {'Kontrib':>8} {'MoM':>6}")
-    lines2.append("-" * 70)
-    for row in table_chan:
-        lines2.append(f"{row['channel'][:16]:<16} {row['input']:>7} {row['completed']:>6} {row['fallout']:>5} {row['completion']:>5.1f}% {row['contrib']:>7.1f}% {row['mom']:>5.1f}%")
-    lines2.append("-" * 70)
-    lines2.append(f"{'TOTAL':<16} {total_chan_input:>7} {total_chan_completed:>6} {total_chan_fallout:>5} {total_chan_completion:>5.1f}% {'100.0':>7}% {total_chan_mom:>5.1f}%")
-    lines2.append("```")
+    lines2.append(f"\n• *TOTAL*: Input {total_chan_input} | Cmpl {total_chan_completed} | Flt {total_chan_fallout} | IO/PS {total_chan_completion:.1f}% | Kontrib 100.0% | MoM {total_chan_mom:.1f}%")
     await query.message.reply_text("\n".join(lines2), parse_mode="Markdown")
 
-    # ----- 3. per WOK channel tables (4 extra messages) -----
+    # ----- 3. per WOK channel summaries (4 extra messages, list format) -----
     for wok in wok_list:
         wok_chan_stats = {ch: {"input": 0, "completed": 0, "fallout": 0, "prev_input": 0} for ch in channels}
         total_wok_input = 0
@@ -1129,7 +1087,7 @@ async def summary_month_selected(update: Update, context: ContextTypes.DEFAULT_T
             if y == prev_year and m == prev_month:
                 wok_chan_stats[rec_channel]["prev_input"] += 1
 
-        table_wok_chan = []
+        lines_wok = [f"📊 *RINGKASAN PER CHANNEL UNTUK {wok}*", f"📅 {month_name.upper()} {year}", ""]
         for ch in channels:
             stats = wok_chan_stats[ch]
             inp = stats["input"]
@@ -1139,28 +1097,11 @@ async def summary_month_selected(update: Update, context: ContextTypes.DEFAULT_T
             completion = (comp / inp * 100) if inp > 0 else 0
             contrib = (inp / total_wok_input * 100) if total_wok_input > 0 else 0
             mom = ((inp - prev) / prev * 100) if prev > 0 else (100 if inp > 0 else 0)
-            table_wok_chan.append({
-                "channel": ch,
-                "input": inp,
-                "completed": comp,
-                "fallout": flt,
-                "completion": completion,
-                "contrib": contrib,
-                "mom": mom
-            })
+            lines_wok.append(f"• *{ch}*: Input {inp} | Cmpl {comp} | Flt {flt} | IO/PS {completion:.1f}% | Kontrib {contrib:.1f}% | MoM {mom:.1f}%")
         total_wok_completion = (total_wok_completed / total_wok_input * 100) if total_wok_input > 0 else 0
         total_wok_prev = sum(wok_chan_stats[ch]["prev_input"] for ch in channels)
         total_wok_mom = ((total_wok_input - total_wok_prev) / total_wok_prev * 100) if total_wok_prev > 0 else (100 if total_wok_input > 0 else 0)
-
-        lines_wok = [f"📊 *RINGKASAN PER CHANNEL UNTUK {wok}*", f"📅 {month_name.upper()} {year}", ""]
-        lines_wok.append("```")
-        lines_wok.append(f"{'Channel':<18} {'Input':>7} {'Cmpl':>6} {'Flt':>5} {'IO/PS':>6} {'Kontrib':>8} {'MoM':>6}")
-        lines_wok.append("-" * 70)
-        for row in table_wok_chan:
-            lines_wok.append(f"{row['channel'][:16]:<16} {row['input']:>7} {row['completed']:>6} {row['fallout']:>5} {row['completion']:>5.1f}% {row['contrib']:>7.1f}% {row['mom']:>5.1f}%")
-        lines_wok.append("-" * 70)
-        lines_wok.append(f"{'TOTAL':<16} {total_wok_input:>7} {total_wok_completed:>6} {total_wok_fallout:>5} {total_wok_completion:>5.1f}% {'100.0':>7}% {total_wok_mom:>5.1f}%")
-        lines_wok.append("```")
+        lines_wok.append(f"\n• *TOTAL*: Input {total_wok_input} | Cmpl {total_wok_completed} | Flt {total_wok_fallout} | IO/PS {total_wok_completion:.1f}% | Kontrib 100.0% | MoM {total_wok_mom:.1f}%")
         await query.message.reply_text("\n".join(lines_wok), parse_mode="Markdown")
 
     return ConversationHandler.END
