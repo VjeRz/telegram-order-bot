@@ -271,7 +271,6 @@ async def send_guide(update: Update, user_id):
 
 # ---------- REGISTRATION FLOW ----------
 async def register_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Determine if we were called from a callback query
     if update.callback_query:
         query = update.callback_query
         await query.answer()
@@ -443,7 +442,12 @@ async def approval_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     data = query.data
-    parts = data.split("_")
+    # Use rsplit to split into two parts: action and the rest (which contains user_id and row_index separated by _)
+    parts = data.split("_", 2)  # splits into ['approve', 'telegram_id', 'row_index']
+    if len(parts) != 3:
+        logger.error(f"Invalid callback data: {data}")
+        await query.edit_message_text("Terjadi kesalahan. Silakan coba lagi.")
+        return
     action = parts[0]
     target_id = int(parts[1])
     row_index = int(parts[2])
@@ -678,7 +682,6 @@ async def sales_month_selected(update: Update, context: ContextTypes.DEFAULT_TYP
     aggregate_only_roles = ["Manager", "Supervisor", "Inputters", "IT"]
 
     if channel == "AGENCY" and subrole in aggregate_only_roles:
-        # Aggregate by status
         status_counts = {s: 0 for s in ALL_STATUSES}
         status_counts["OTHER"] = 0
         total = 0
@@ -706,7 +709,6 @@ async def sales_month_selected(update: Update, context: ContextTypes.DEFAULT_TYP
         return ConversationHandler.END
 
     if channel == "AGENCY":
-        # Per‑salesperson breakdown
         sales_dict = {}
         for rec in filtered:
             sf = rec.get("SalesForce", "").strip()
@@ -770,7 +772,6 @@ async def sales_month_selected(update: Update, context: ContextTypes.DEFAULT_TYP
                     chunk_text = base_text + "\n".join(current_chunk)
                     await query.message.reply_text(chunk_text)
             else:
-                # For other roles (IT, HSA, etc.) show per‑salesperson summary without order list
                 lines = [f"👤 {sf}", f"   🔢 Total Order: {data['total']}"]
                 status_summary = []
                 for s in ALL_STATUSES:
@@ -791,7 +792,6 @@ async def sales_month_selected(update: Update, context: ContextTypes.DEFAULT_TYP
                 await query.message.reply_text("\n".join(lines))
         await query.message.reply_text("✅ Selesai. Terima kasih.")
     else:
-        # Non‑AGENCY channels: aggregated totals by status
         status_counts = {s: 0 for s in ALL_STATUSES}
         status_counts["OTHER"] = 0
         total = 0
