@@ -37,7 +37,7 @@ REG_WOK = 6
 REG_SFID = 7
 BULK_AWAITING_IDS = 10
 SALES_WOK = 20
-DETAIL_WOK = 21          # new state for detailed report WOK selection
+DETAIL_WOK = 21
 SALES_CHANNEL = 22
 SALES_YEAR = 23
 SALES_MONTH = 24
@@ -609,7 +609,7 @@ async def sales_choose(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("BITUNG MINAHASA", callback_data="wok_BITUNG MINAHASA")]
         ])
         await query.message.reply_text("Pilih WOK:", reply_markup=wok_keyboard)
-        return DETAIL_WOK   # new state for WOK selection
+        return DETAIL_WOK
     elif data == "sales_summary":
         await query.message.delete()
         current_year = datetime.now().year
@@ -625,7 +625,7 @@ async def sales_choose(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return ConversationHandler.END
     return ConversationHandler.END
 
-# ---------- DETAILED REPORT WOK HANDLER ----------
+# ---------- DETAILED WOK HANDLER (for Laporan Detail) ----------
 async def detail_wok_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -636,8 +636,9 @@ async def detail_wok_selected(update: Update, context: ContextTypes.DEFAULT_TYPE
     _, subrole = get_user_role(user_id)
     context.user_data["report_subrole"] = subrole
 
-    if subrole == "Team Leader":
-        context.user_data["report_channel"] = "AGENCY"
+    aggregate_only_roles = ["Manager", "Supervisor", "Inputters", "IT"]
+    if subrole in aggregate_only_roles:
+        # Skip channel selection, go directly to year
         current_year = datetime.now().year
         year_keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton(str(current_year - 1), callback_data=f"year_{current_year-1}"),
@@ -646,6 +647,7 @@ async def detail_wok_selected(update: Update, context: ContextTypes.DEFAULT_TYPE
         await query.edit_message_text("Pilih tahun:", reply_markup=year_keyboard)
         return SALES_YEAR
     else:
+        # For Team Leader (and other non‑aggregate roles), go to channel selection
         channel_keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton("B2B2C&OTHERS", callback_data="chan_B2B2C&OTHERS")],
             [InlineKeyboardButton("AGENCY", callback_data="chan_AGENCY")],
@@ -656,7 +658,6 @@ async def detail_wok_selected(update: Update, context: ContextTypes.DEFAULT_TYPE
         await query.edit_message_text("Pilih Channel:", reply_markup=channel_keyboard)
         return SALES_CHANNEL
 
-# ---------- CHANNEL, YEAR, MONTH HANDLERS (same as before) ----------
 async def sales_channel_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -693,7 +694,6 @@ async def sales_year_selected(update: Update, context: ContextTypes.DEFAULT_TYPE
     return SALES_MONTH
 
 async def sales_month_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Detailed report logic (same as before)
     query = update.callback_query
     await query.answer()
     month_num = int(query.data.split("_")[1])
@@ -702,9 +702,74 @@ async def sales_month_selected(update: Update, context: ContextTypes.DEFAULT_TYP
     month_name = month_names[month_num - 1]
     year = context.user_data.get("report_year", datetime.now().year)
     wok = context.user_data["report_wok"]
-    channel = context.user_data["report_channel"]
+    channel = context.user_data.get("report_channel", "")
     subrole = context.user_data["report_subrole"]
 
+    aggregate_only_roles = ["Manager", "Supervisor", "Inputters", "IT"]
+
+    # If the user is in aggregate_only_roles, we show the status breakdown with percentages.
+    if subrole in aggregate_only_roles:
+        records = get_raw_records()
+        # Filter by WOK, year, month
+        filtered = []
+        for rec in records:
+            rec_wok = rec.get("WOK", "")
+            if rec_wok != wok:
+                continue
+            rec_tanggal_input = rec.get("Tanggal Input", "")
+            if not rec_tanggal_input:
+                continue
+            try:
+                if '-' in rec_tanggal_input:
+                    date_part = rec_tanggal_input.split()[0]
+                    y, m, d = map(int, date_part.split('-'))
+                else:
+                    date_part = rec_tanggal_input.split()[0]
+                    d, m, y = map(int, date_part.split('/'))
+                if m == month_num and y == year:
+                    filtered.append(rec)
+            except:
+                continue
+
+        if not filtered:
+            await query.edit_message_text(f"Tidak ada data untuk WOK: {wok}, Tahun: {year}, Bulan: {month_name}.")
+            return ConversationHandler.END
+
+        await query.delete_message()
+        processing_msg = await query.message.reply_text("⏳ Sedang memproses data...")
+
+        # Count statuses
+        status_counts = {s: 0 for s in ALL_STATUSES}
+        status_counts["OTHER"] = 0
+        total = 0
+        for rec in filtered:
+            total += 1
+            status = rec.get("Status Order", "").upper().strip()
+            if status in status_counts:
+                status_counts[status] += 1
+            else:
+                status_counts["OTHER"] += 1
+
+        lines = [f"📍 WOK: {wok}", f"📅 Tahun: {year}", f"📅 Bulan: {month_name.upper()}", ""]
+        lines.append(f"📊 Total Order: {total}")
+        lines.append("🔍 Rincian Status:")
+        for s in ALL_STATUSES:
+            count = status_counts[s]
+            if count > 0:
+                perc = (count / total) * 100 if total > 0 else 0
+                if s == "COMPLETED":
+                    lines.append(f"   ✅ {s}: {count} ({perc:.1f}%)")
+                elif s in ["FALLOUT", "CANCELLED", "CANCELLED_SLA", "CANCEL_OSM_COMPLETED", "CANCEL_ORDER_INPROGRESS"]:
+                    lines.append(f"   ❌ {s}: {count} ({perc:.1f}%)")
+                else:
+                    lines.append(f"   🔄 {s}: {count} ({perc:.1f}%)")
+        if status_counts["OTHER"] > 0:
+            perc_other = (status_counts["OTHER"] / total) * 100 if total > 0 else 0
+            lines.append(f"   ❓ OTHER: {status_counts['OTHER']} ({perc_other:.1f}%)")
+        await processing_msg.edit_text("\n".join(lines))
+        return ConversationHandler.END
+
+    # Otherwise (Team Leader), continue with the original detailed logic (per-salesperson)
     records = get_order_sheet_records()
     filtered = []
     for rec in records:
@@ -731,35 +796,6 @@ async def sales_month_selected(update: Update, context: ContextTypes.DEFAULT_TYP
 
     await query.delete_message()
     processing_msg = await query.message.reply_text("⏳ Sedang memproses data...")
-
-    aggregate_only_roles = ["Manager", "Supervisor", "Inputters", "IT"]
-
-    if channel == "AGENCY" and subrole in aggregate_only_roles:
-        status_counts = {s: 0 for s in ALL_STATUSES}
-        status_counts["OTHER"] = 0
-        total = 0
-        for rec in filtered:
-            total += 1
-            status = rec.get("Status Order", "").upper().strip()
-            if status in status_counts:
-                status_counts[status] += 1
-            else:
-                status_counts["OTHER"] += 1
-        lines = [f"📢 Channel: {channel}", f"📅 Tahun: {year}", f"📅 Bulan: {month_name.upper()}", f"📍 WOK: {wok}", ""]
-        lines.append(f"📊 Total Order: {total}")
-        lines.append("🔍 Rincian Status:")
-        for s in ALL_STATUSES:
-            if status_counts[s] > 0:
-                if s == "COMPLETED":
-                    lines.append(f"   ✅ {s}: {status_counts[s]}")
-                elif s in ["FALLOUT", "CANCELLED", "CANCELLED_SLA", "CANCEL_OSM_COMPLETED", "CANCEL_ORDER_INPROGRESS"]:
-                    lines.append(f"   ❌ {s}: {status_counts[s]}")
-                else:
-                    lines.append(f"   🔄 {s}: {status_counts[s]}")
-        if status_counts["OTHER"] > 0:
-            lines.append(f"   ❓ OTHER: {status_counts['OTHER']}")
-        await processing_msg.edit_text("\n".join(lines))
-        return ConversationHandler.END
 
     if channel == "AGENCY":
         sales_dict = {}
@@ -825,6 +861,7 @@ async def sales_month_selected(update: Update, context: ContextTypes.DEFAULT_TYP
                     chunk_text = base_text + "\n".join(current_chunk)
                     await query.message.reply_text(chunk_text)
             else:
+                # Not used for Team Leader, but keep
                 lines = [f"👤 {sf}", f"   🔢 Total Order: {data['total']}"]
                 status_summary = []
                 for s in ALL_STATUSES:
@@ -871,7 +908,7 @@ async def sales_month_selected(update: Update, context: ContextTypes.DEFAULT_TYP
         await processing_msg.edit_text("\n".join(lines))
     return ConversationHandler.END
 
-# ---------- SUMMARY REPORT HANDLERS (unchanged from last working version) ----------
+# ---------- SUMMARY REPORT (Overall + per WOK channel tables) ----------
 async def summary_year_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -922,6 +959,7 @@ async def summary_month_selected(update: Update, context: ContextTypes.DEFAULT_T
             pass
         return None, None
 
+    # ----- 1. per WOK table -----
     wok_list = ["MANADO TALAUD", "BOLAANG MONGONDOW", "GORONTALO - PAHUWATO", "BITUNG MINAHASA"]
     wok_stats = {}
     total_input = 0
@@ -990,7 +1028,7 @@ async def summary_month_selected(update: Update, context: ContextTypes.DEFAULT_T
     lines1.append("```")
     await query.message.reply_text("\n".join(lines1), parse_mode="Markdown")
 
-    # Per channel summary (same as before)
+    # ----- 2. overall per channel table -----
     channels = ["B2B2C&OTHERS", "AGENCY", "GRAPARI", "SOBI AFFILIATE", "WEB&APP"]
     chan_stats = {}
     total_chan_input = 0
@@ -1058,6 +1096,73 @@ async def summary_month_selected(update: Update, context: ContextTypes.DEFAULT_T
     lines2.append(f"{'TOTAL':<16} {total_chan_input:>7} {total_chan_completed:>6} {total_chan_fallout:>5} {total_chan_completion:>5.1f}% {'100.0':>7}% {total_chan_mom:>5.1f}%")
     lines2.append("```")
     await query.message.reply_text("\n".join(lines2), parse_mode="Markdown")
+
+    # ----- 3. per WOK channel tables (4 extra messages) -----
+    for wok in wok_list:
+        wok_chan_stats = {ch: {"input": 0, "completed": 0, "fallout": 0, "prev_input": 0} for ch in channels}
+        total_wok_input = 0
+        total_wok_completed = 0
+        total_wok_fallout = 0
+        for rec in records:
+            rec_wok = rec.get("WOK", "")
+            if rec_wok != wok:
+                continue
+            rec_channel = rec.get("Channel Name", "")
+            if rec_channel not in channels:
+                continue
+            tgl = rec.get("Tanggal Input", "")
+            y, m = extract_date(tgl)
+            if y is None or m is None:
+                continue
+            status = (rec.get("Status Order", "") or "").strip().upper()
+            if y == year and m == month_num:
+                total_wok_input += 1
+                if status == "COMPLETED":
+                    total_wok_completed += 1
+                elif status == "FALLOUT":
+                    total_wok_fallout += 1
+                wok_chan_stats[rec_channel]["input"] += 1
+                if status == "COMPLETED":
+                    wok_chan_stats[rec_channel]["completed"] += 1
+                elif status == "FALLOUT":
+                    wok_chan_stats[rec_channel]["fallout"] += 1
+            if y == prev_year and m == prev_month:
+                wok_chan_stats[rec_channel]["prev_input"] += 1
+
+        table_wok_chan = []
+        for ch in channels:
+            stats = wok_chan_stats[ch]
+            inp = stats["input"]
+            comp = stats["completed"]
+            flt = stats["fallout"]
+            prev = stats["prev_input"]
+            completion = (comp / inp * 100) if inp > 0 else 0
+            contrib = (inp / total_wok_input * 100) if total_wok_input > 0 else 0
+            mom = ((inp - prev) / prev * 100) if prev > 0 else (100 if inp > 0 else 0)
+            table_wok_chan.append({
+                "channel": ch,
+                "input": inp,
+                "completed": comp,
+                "fallout": flt,
+                "completion": completion,
+                "contrib": contrib,
+                "mom": mom
+            })
+        total_wok_completion = (total_wok_completed / total_wok_input * 100) if total_wok_input > 0 else 0
+        total_wok_prev = sum(wok_chan_stats[ch]["prev_input"] for ch in channels)
+        total_wok_mom = ((total_wok_input - total_wok_prev) / total_wok_prev * 100) if total_wok_prev > 0 else (100 if total_wok_input > 0 else 0)
+
+        lines_wok = [f"📊 *RINGKASAN PER CHANNEL UNTUK {wok}*", f"📅 {month_name.upper()} {year}", ""]
+        lines_wok.append("```")
+        lines_wok.append(f"{'Channel':<18} {'Input':>7} {'Cmpl':>6} {'Flt':>5} {'IO/PS':>6} {'Kontrib':>8} {'MoM':>6}")
+        lines_wok.append("-" * 70)
+        for row in table_wok_chan:
+            lines_wok.append(f"{row['channel'][:16]:<16} {row['input']:>7} {row['completed']:>6} {row['fallout']:>5} {row['completion']:>5.1f}% {row['contrib']:>7.1f}% {row['mom']:>5.1f}%")
+        lines_wok.append("-" * 70)
+        lines_wok.append(f"{'TOTAL':<16} {total_wok_input:>7} {total_wok_completed:>6} {total_wok_fallout:>5} {total_wok_completion:>5.1f}% {'100.0':>7}% {total_wok_mom:>5.1f}%")
+        lines_wok.append("```")
+        await query.message.reply_text("\n".join(lines_wok), parse_mode="Markdown")
+
     return ConversationHandler.END
 
 # ---------- USAGE REPORT ----------
