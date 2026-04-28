@@ -245,9 +245,11 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if data == "menu_register":
         await query.message.delete()
+        # Start registration conversation – we call register_start with the callback query
         await register_start(update, context)
     elif data == "menu_single_order":
         await query.message.delete()
+        # Send the prompt now, then use conversation
         await single_order_start(update, context)
     elif data == "menu_bulk_order":
         await query.message.delete()
@@ -303,17 +305,30 @@ async def send_guide(update: Update, user_id):
 
 # ---------- REGISTRATION FLOW (with timeout) ----------
 async def register_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
+    # Determine if we were called from a callback query
+    if update.callback_query:
+        # Called from inline button – use the query's message to reply
+        query = update.callback_query
+        await query.answer()
+        chat_id = query.message.chat_id
+        user_id = query.from_user.id
+        send_func = query.message.reply_text
+    else:
+        user_id = update.effective_user.id
+        send_func = update.message.reply_text
+
     if is_user_approved(user_id):
-        await update.message.reply_text("Anda sudah terdaftar dan disetujui.")
+        await send_func("Anda sudah terdaftar dan disetujui.")
         return ConversationHandler.END
     records = users_sheet.get_all_records()
     for r in records:
         if str(r.get("TelegramID", "")) == str(user_id) and r.get("ApprovalStatus") == "pending":
-            await update.message.reply_text("Anda sudah memiliki pendaftaran yang menunggu persetujuan. Mohon tunggu.")
+            await send_func("Anda sudah memiliki pendaftaran yang menunggu persetujuan. Mohon tunggu.")
             return ConversationHandler.END
-    await update.message.reply_text("Selamat datang! Mari daftar.\n\nMasukkan nama lengkap Anda:")
-    await schedule_timeout(context, update.effective_chat.id, user_id, REG_NAME)
+    await send_func("Selamat datang! Mari daftar.\n\nMasukkan nama lengkap Anda:")
+    # We need the chat_id for timeout; we can get from update.effective_chat or from query.
+    chat_id = update.effective_chat.id if update.effective_chat else query.message.chat_id
+    await schedule_timeout(context, chat_id, user_id, REG_NAME)
     return REG_NAME
 
 async def reg_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -504,12 +519,15 @@ async def approval_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ---------- SINGLE ORDER ----------
 async def single_order_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Called from callback query
+    query = update.callback_query
+    await query.answer()
     user_id = update.effective_user.id
     if not is_user_approved(user_id):
-        await update.message.reply_text("Anda belum terdaftar atau belum disetujui. Silakan gunakan tombol Daftar.")
+        await query.message.reply_text("Anda belum terdaftar atau belum disetujui. Silakan gunakan tombol Daftar.")
         return ConversationHandler.END
-    await update.message.reply_text("Masukkan Order ID (contoh: AOs326032509275620607db90):")
-    await schedule_timeout(context, update.effective_chat.id, user_id, WAITING_FOR_SINGLE_ORDER)
+    await query.message.reply_text("Masukkan Order ID (contoh: AOs326032509275620607db90):")
+    await schedule_timeout(context, query.message.chat_id, user_id, WAITING_FOR_SINGLE_ORDER)
     return WAITING_FOR_SINGLE_ORDER
 
 async def receive_single_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -548,17 +566,19 @@ async def receive_single_order(update: Update, context: ContextTypes.DEFAULT_TYP
 
 # ---------- BULK ORDER WITH TIMEOUT ----------
 async def bulk_order_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
     user_id = update.effective_user.id
     if not is_user_approved(user_id):
-        await update.message.reply_text("Anda belum terdaftar atau belum disetujui. Silakan gunakan tombol Daftar.")
+        await query.message.reply_text("Anda belum terdaftar atau belum disetujui. Silakan gunakan tombol Daftar.")
         return ConversationHandler.END
-    await update.message.reply_text(
+    await query.message.reply_text(
         "Masukkan 2 hingga 10 Order ID dalam satu pesan.\n"
         "Pisahkan dengan spasi.\n\n"
         "Contoh: AOi123 AOi456 AOi789\n\n"
         "Anda memiliki waktu 3 menit. Jika tidak ada respons, proses akan dibatalkan."
     )
-    await schedule_timeout(context, update.effective_chat.id, user_id, BULK_AWAITING_IDS)
+    await schedule_timeout(context, query.message.chat_id, user_id, BULK_AWAITING_IDS)
     return BULK_AWAITING_IDS
 
 async def process_bulk_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -603,9 +623,11 @@ async def process_bulk_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 # ---------- SALES REPORT WITH YEAR ----------
 async def sales_report_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
     user_id = update.effective_user.id
     if not (is_user_approved(user_id) and can_view_sales_report(user_id)):
-        await update.message.reply_text("Hanya Supervisor, Team Leader, IT, dan Manager yang dapat melihat laporan performa sales.")
+        await query.message.reply_text("Hanya Supervisor, Team Leader, IT, dan Manager yang dapat melihat laporan performa sales.")
         return ConversationHandler.END
     wok_keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("MANADO TALAUD", callback_data="wok_MANADO TALAUD")],
@@ -613,8 +635,8 @@ async def sales_report_start(update: Update, context: ContextTypes.DEFAULT_TYPE)
         [InlineKeyboardButton("GORONTALO - PAHUWATO", callback_data="wok_GORONTALO - PAHUWATO")],
         [InlineKeyboardButton("BITUNG MINAHASA", callback_data="wok_BITUNG MINAHASA")]
     ])
-    await update.message.reply_text("Pilih WOK:", reply_markup=wok_keyboard)
-    await schedule_timeout(context, update.effective_chat.id, user_id, SALES_WOK)
+    await query.message.reply_text("Pilih WOK:", reply_markup=wok_keyboard)
+    await schedule_timeout(context, query.message.chat_id, user_id, SALES_WOK)
     return SALES_WOK
 
 async def sales_wok_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -733,11 +755,9 @@ async def sales_month_selected(update: Update, context: ContextTypes.DEFAULT_TYP
     await query.delete_message()
     processing_msg = await query.message.reply_text("⏳ Sedang memproses data...")
 
-    # Roles that should see aggregated summary even for AGENCY channel
     aggregate_only_roles = ["Manager", "Supervisor", "Inputters", "IT"]
 
     if channel == "AGENCY" and subrole in aggregate_only_roles:
-        # Treat like non-AGENCY channel: aggregated totals by status
         status_counts = {s: 0 for s in ALL_STATUSES}
         status_counts["OTHER"] = 0
         total = 0
@@ -764,9 +784,7 @@ async def sales_month_selected(update: Update, context: ContextTypes.DEFAULT_TYP
         await processing_msg.edit_text("\n".join(lines))
         return ConversationHandler.END
 
-    # Original per-salesperson breakdown for AGENCY (Team Leader, HSA, etc.) or for non-AGENCY channels we'll keep separate
     if channel == "AGENCY":
-        # Per-salesperson breakdown
         sales_dict = {}
         for rec in filtered:
             sf = rec.get("SalesForce", "").strip()
@@ -830,7 +848,6 @@ async def sales_month_selected(update: Update, context: ContextTypes.DEFAULT_TYP
                     chunk_text = base_text + "\n".join(current_chunk)
                     await query.message.reply_text(chunk_text)
             else:
-                # For other roles (HSA, etc.) show per-salesperson summary without order list
                 lines = [f"👤 {sf}", f"   🔢 Total Order: {data['total']}"]
                 status_summary = []
                 for s in ALL_STATUSES:
@@ -851,7 +868,6 @@ async def sales_month_selected(update: Update, context: ContextTypes.DEFAULT_TYP
                 await query.message.reply_text("\n".join(lines))
         await query.message.reply_text("✅ Selesai. Terima kasih.")
     else:
-        # Non-AGENCY channels: aggregated totals by status
         status_counts = {s: 0 for s in ALL_STATUSES}
         status_counts["OTHER"] = 0
         total = 0
