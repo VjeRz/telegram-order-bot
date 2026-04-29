@@ -43,6 +43,7 @@ SALES_YEAR = 23
 SALES_MONTH = 24
 SUMMARY_YEAR = 30
 SUMMARY_MONTH = 31
+TEAM_LEADER_OPTION = 32   # new state for choosing CSV or show data
 
 ALL_STATUSES = [
     "PENDING_CUSTOMER_VERIFICATION", "PROVISION_START", "TECH_ASSIGNED",
@@ -76,6 +77,7 @@ def get_bot_data_spreadsheet(spreadsheet_name):
 order_sheet = init_order_sheet(ORDER_SHEET_NAME)
 bot_data_spreadsheet = get_bot_data_spreadsheet(BOT_DATA_SHEET_NAME)
 
+# Users and UsageLog sheets
 try:
     users_sheet = bot_data_spreadsheet.worksheet("Users")
 except gspread.WorksheetNotFound:
@@ -122,7 +124,6 @@ def get_last_order_date():
                 tgl = rec.get("Tanggal Input", "")
                 if not tgl:
                     continue
-                # Try to parse the date
                 try:
                     if '-' in tgl:
                         date_part = tgl.split()[0]
@@ -322,7 +323,7 @@ async def send_guide(update: Update, user_id):
         )
     await reply(text, parse_mode="Markdown")
 
-# ---------- REGISTRATION FLOW (unchanged) ----------
+# ---------- REGISTRATION FLOW ----------
 async def register_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.callback_query:
         query = update.callback_query
@@ -677,6 +678,7 @@ async def detail_wok_selected(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     aggregate_only_roles = ["Manager", "Supervisor", "Inputters", "IT"]
     if subrole in aggregate_only_roles:
+        # For managers: skip channel, go directly to year
         current_year = datetime.now().year
         year_keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton(str(current_year - 1), callback_data=f"year_{current_year-1}"),
@@ -685,28 +687,16 @@ async def detail_wok_selected(update: Update, context: ContextTypes.DEFAULT_TYPE
         await query.edit_message_text("Pilih tahun:", reply_markup=year_keyboard)
         return SALES_YEAR
     else:
-        channel_keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("B2B2C&OTHERS", callback_data="chan_B2B2C&OTHERS")],
-            [InlineKeyboardButton("AGENCY", callback_data="chan_AGENCY")],
-            [InlineKeyboardButton("GRAPARI", callback_data="chan_GRAPARI")],
-            [InlineKeyboardButton("SOBI AFFILIATE", callback_data="chan_SOBI AFFILIATE")],
-            [InlineKeyboardButton("WEB&APP", callback_data="chan_WEB&APP")]
+        # For Team Leader: also skip channel (force AGENCY), go directly to year
+        # We'll set channel as AGENCY implicitly
+        context.user_data["report_channel"] = "AGENCY"
+        current_year = datetime.now().year
+        year_keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton(str(current_year - 1), callback_data=f"year_{current_year-1}"),
+             InlineKeyboardButton(str(current_year), callback_data=f"year_{current_year}")]
         ])
-        await query.edit_message_text("Pilih Channel:", reply_markup=channel_keyboard)
-        return SALES_CHANNEL
-
-async def sales_channel_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    channel = query.data.split("_", 1)[1]
-    context.user_data["report_channel"] = channel
-    current_year = datetime.now().year
-    year_keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton(str(current_year - 1), callback_data=f"year_{current_year-1}"),
-         InlineKeyboardButton(str(current_year), callback_data=f"year_{current_year}")]
-    ])
-    await query.edit_message_text("Pilih tahun:", reply_markup=year_keyboard)
-    return SALES_YEAR
+        await query.edit_message_text("Pilih tahun:", reply_markup=year_keyboard)
+        return SALES_YEAR
 
 async def sales_year_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -739,11 +729,13 @@ async def sales_month_selected(update: Update, context: ContextTypes.DEFAULT_TYP
     month_name = month_names[month_num - 1]
     year = context.user_data.get("report_year", datetime.now().year)
     wok = context.user_data["report_wok"]
+    # For manager roles, channel is irrelevant; for Team Leader it's AGENCY
     channel = context.user_data.get("report_channel", "")
-    subrole = context.user_data["report_subrole"]
+    subrole = context.user_data.get("report_subrole")
 
     aggregate_only_roles = ["Manager", "Supervisor", "Inputters", "IT"]
 
+    # --- Manager / Supervisor / Inputters / IT: status breakdown with percentages ---
     if subrole in aggregate_only_roles:
         records = get_raw_records()
         filtered = []
@@ -800,12 +792,47 @@ async def sales_month_selected(update: Update, context: ContextTypes.DEFAULT_TYP
         if status_counts["OTHER"] > 0:
             perc_other = (status_counts["OTHER"] / total) * 100 if total > 0 else 0
             lines.append(f"   ❓ OTHER: {status_counts['OTHER']} ({perc_other:.1f}%)")
-        # Add footer with last order date
         lines.append(f"\n\n📅 Last Update Data: {get_last_order_date()}")
         await processing_msg.edit_text("\n".join(lines))
         return ConversationHandler.END
 
-    # Team Leader flow (original)
+    # --- Team Leader: offer CSV download or show data (per-salesperson list) ---
+    if subrole == "Team Leader":
+        # Store filter parameters in context for later use
+        context.user_data["tl_wok"] = wok
+        context.user_data["tl_year"] = year
+        context.user_data["tl_month_num"] = month_num
+        context.user_data["tl_month_name"] = month_name
+
+        # Show inline keyboard with two options
+        option_keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("📥 Download CSV", callback_data="tl_csv")],
+            [InlineKeyboardButton("📋 Tampilkan Data", callback_data="tl_show")]
+        ])
+        await query.edit_message_text(
+            f"WOK: {wok}\n📅 {month_name.upper()} {year}\n\nPilih format laporan:",
+            reply_markup=option_keyboard
+        )
+        return TEAM_LEADER_OPTION
+
+    # (Other roles – not expected here)
+    return ConversationHandler.END
+
+async def team_leader_option_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    action = query.data  # "tl_csv" or "tl_show"
+
+    wok = context.user_data.get("tl_wok")
+    year = context.user_data.get("tl_year")
+    month_num = context.user_data.get("tl_month_num")
+    month_name = context.user_data.get("tl_month_name")
+
+    if not wok:
+        await query.edit_message_text("Terjadi kesalahan. Silakan coba lagi.")
+        return ConversationHandler.END
+
+    # Get filtered orders
     records = get_order_sheet_records()
     filtered = []
     for rec in records:
@@ -821,19 +848,47 @@ async def sales_month_selected(update: Update, context: ContextTypes.DEFAULT_TYP
             else:
                 date_part = rec_tanggal_input.split()[0]
                 d, m, y = map(int, date_part.split('/'))
-            if m == month_num and y == year and rec_wok == wok and rec_channel == channel:
+            # Team Leader always AGENCY
+            if m == month_num and y == year and rec_wok == wok and rec_channel == "AGENCY":
                 filtered.append(rec)
         except:
             continue
 
     if not filtered:
-        await query.edit_message_text(f"Tidak ada data untuk WOK: {wok}, Channel: {channel}, Tahun: {year}, Bulan: {month_name}.")
+        await query.edit_message_text(f"Tidak ada data untuk WOK: {wok}, Bulan: {month_name} {year}.")
         return ConversationHandler.END
 
-    await query.delete_message()
-    processing_msg = await query.message.reply_text("⏳ Sedang memproses data...")
+    if action == "tl_csv":
+        # Generate CSV
+        output = io.StringIO()
+        writer = csv.writer(output)
+        # Header
+        writer.writerow(["Order ID", "STO", "WOK", "Status Order", "Channel Name", "Fallout Reason", "SalesForce", "Tanggal Complete", "Tanggal Input", "Sub Error Code", "Technician Notes", "Paket"])
+        for rec in filtered:
+            writer.writerow([
+                rec.get("Order ID", ""),
+                rec.get("STO", ""),
+                rec.get("WOK", ""),
+                rec.get("Status Order", ""),
+                rec.get("Channel Name", ""),
+                rec.get("Fallout Reason", ""),
+                rec.get("SalesForce", ""),
+                rec.get("Tanggal Complete", ""),
+                rec.get("Tanggal Input", ""),
+                rec.get("Sub Error Code", ""),
+                rec.get("Technician Notes", ""),
+                rec.get("Paket", "")
+            ])
+        output.seek(0)
+        filename = f"orders_{wok}_{year}_{month_num}.csv"
+        await query.message.reply_document(document=output, filename=filename, caption=f"📊 Data Order {wok} - {month_name} {year}")
+        await query.delete_message()
+        return ConversationHandler.END
 
-    if channel == "AGENCY":
+    else:  # tl_show – original per-salesperson list
+        await query.delete_message()
+        processing_msg = await query.message.reply_text("⏳ Sedang memproses data...")
+
         sales_dict = {}
         for rec in filtered:
             sf = rec.get("SalesForce", "").strip()
@@ -852,98 +907,52 @@ async def sales_month_selected(update: Update, context: ContextTypes.DEFAULT_TYP
                 if "OTHER" not in sales_dict[sf]:
                     sales_dict[sf]["OTHER"] = 0
                 sales_dict[sf]["OTHER"] += 1
-            if subrole == "Team Leader":
-                order_id = rec.get("Order ID", "")
-                sales_dict[sf]["orders"].append((order_id, status))
+            order_id = rec.get("Order ID", "")
+            sales_dict[sf]["orders"].append((order_id, status))
 
         sorted_sf = sorted(sales_dict.items(), key=lambda x: x[1]["total"], reverse=True)
-        header = f"📢 Channel: {channel}\n📅 Tahun: {year}\n📅 Bulan: {month_name.upper()}\n📍 WOK: {wok}"
+        header = f"📢 Channel: AGENCY\n📅 Tahun: {year}\n📅 Bulan: {month_name.upper()}\n📍 WOK: {wok}"
         await processing_msg.edit_text(header)
 
         for sf, data in sorted_sf:
-            if subrole == "Team Leader":
-                lines = [f"👤 {sf}"]
-                lines.append(f"   📦 Total Order: {data['total']}")
-                status_summary = []
-                for s in ALL_STATUSES:
-                    count = data.get(s, 0)
-                    if count > 0:
-                        if s == "COMPLETED":
-                            status_summary.append(f"✅ {s}: {count}")
-                        elif s in ["FALLOUT", "CANCELLED", "CANCELLED_SLA", "CANCEL_OSM_COMPLETED", "CANCEL_ORDER_INPROGRESS"]:
-                            status_summary.append(f"❌ {s}: {count}")
-                        else:
-                            status_summary.append(f"🔄 {s}: {count}")
-                if data.get("OTHER", 0) > 0:
-                    status_summary.append(f"❓ OTHER: {data['OTHER']}")
-                if status_summary:
-                    lines.append("   📊 Status:")
-                    for stat_line in status_summary:
-                        lines.append(f"      {stat_line}")
-                lines.append("   🧾 Daftar Order:")
-                order_lines = [f"      • {oid} ({stat})" for oid, stat in data["orders"]]
-                base_text = "\n".join(lines[:-1]) + "\n   🧾 Daftar Order:\n"
-                current_chunk = []
-                current_len = len(base_text) + 10
-                for order_line in order_lines:
-                    if current_len + len(order_line) + 1 > 4000:
-                        chunk_text = base_text + "\n".join(current_chunk)
-                        await query.message.reply_text(chunk_text)
-                        current_chunk = []
-                        current_len = len(base_text) + 10
-                    current_chunk.append(order_line)
-                    current_len += len(order_line) + 1
-                if current_chunk:
+            lines = [f"👤 {sf}"]
+            lines.append(f"   📦 Total Order: {data['total']}")
+            status_summary = []
+            for s in ALL_STATUSES:
+                count = data.get(s, 0)
+                if count > 0:
+                    if s == "COMPLETED":
+                        status_summary.append(f"✅ {s}: {count}")
+                    elif s in ["FALLOUT", "CANCELLED", "CANCELLED_SLA", "CANCEL_OSM_COMPLETED", "CANCEL_ORDER_INPROGRESS"]:
+                        status_summary.append(f"❌ {s}: {count}")
+                    else:
+                        status_summary.append(f"🔄 {s}: {count}")
+            if data.get("OTHER", 0) > 0:
+                status_summary.append(f"❓ OTHER: {data['OTHER']}")
+            if status_summary:
+                lines.append("   📊 Status:")
+                for stat_line in status_summary:
+                    lines.append(f"      {stat_line}")
+            lines.append("   🧾 Daftar Order:")
+            order_lines = [f"      • {oid} ({stat})" for oid, stat in data["orders"]]
+            base_text = "\n".join(lines[:-1]) + "\n   🧾 Daftar Order:\n"
+            current_chunk = []
+            current_len = len(base_text) + 10
+            for order_line in order_lines:
+                if current_len + len(order_line) + 1 > 4000:
                     chunk_text = base_text + "\n".join(current_chunk)
                     await query.message.reply_text(chunk_text)
-            else:
-                lines = [f"👤 {sf}", f"   🔢 Total Order: {data['total']}"]
-                status_summary = []
-                for s in ALL_STATUSES:
-                    count = data.get(s, 0)
-                    if count > 0:
-                        if s == "COMPLETED":
-                            status_summary.append(f"✅ {s}: {count}")
-                        elif s in ["FALLOUT", "CANCELLED", "CANCELLED_SLA", "CANCEL_OSM_COMPLETED", "CANCEL_ORDER_INPROGRESS"]:
-                            status_summary.append(f"❌ {s}: {count}")
-                        else:
-                            status_summary.append(f"🔄 {s}: {count}")
-                if data.get("OTHER", 0) > 0:
-                    status_summary.append(f"❓ OTHER: {data['OTHER']}")
-                if status_summary:
-                    lines.append("   📊 Rincian Status:")
-                    for stat_line in status_summary:
-                        lines.append(f"      {stat_line}")
-                await query.message.reply_text("\n".join(lines))
+                    current_chunk = []
+                    current_len = len(base_text) + 10
+                current_chunk.append(order_line)
+                current_len += len(order_line) + 1
+            if current_chunk:
+                chunk_text = base_text + "\n".join(current_chunk)
+                await query.message.reply_text(chunk_text)
         await query.message.reply_text("✅ Selesai. Terima kasih.")
-    else:
-        status_counts = {s: 0 for s in ALL_STATUSES}
-        status_counts["OTHER"] = 0
-        total = 0
-        for rec in filtered:
-            total += 1
-            status = rec.get("Status Order", "").upper().strip()
-            if status in status_counts:
-                status_counts[status] += 1
-            else:
-                status_counts["OTHER"] += 1
-        lines = [f"📢 Channel: {channel}", f"📅 Tahun: {year}", f"📅 Bulan: {month_name.upper()}", f"📍 WOK: {wok}", ""]
-        lines.append(f"📊 Total Order: {total}")
-        lines.append("🔍 Rincian Status:")
-        for s in ALL_STATUSES:
-            if status_counts[s] > 0:
-                if s == "COMPLETED":
-                    lines.append(f"   ✅ {s}: {status_counts[s]}")
-                elif s in ["FALLOUT", "CANCELLED", "CANCELLED_SLA", "CANCEL_OSM_COMPLETED", "CANCEL_ORDER_INPROGRESS"]:
-                    lines.append(f"   ❌ {s}: {status_counts[s]}")
-                else:
-                    lines.append(f"   🔄 {s}: {status_counts[s]}")
-        if status_counts["OTHER"] > 0:
-            lines.append(f"   ❓ OTHER: {status_counts['OTHER']}")
-        await processing_msg.edit_text("\n".join(lines))
-    return ConversationHandler.END
+        return ConversationHandler.END
 
-# ---------- SUMMARY REPORT (with bullet list format + footer) ----------
+# ---------- SUMMARY REPORT (Ringkasan) ----------
 async def summary_year_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -1098,7 +1107,7 @@ async def summary_month_selected(update: Update, context: ContextTypes.DEFAULT_T
     lines2.append(f"\n\n📅 Last Update Data: {get_last_order_date()}")
     await query.message.reply_text("\n".join(lines2), parse_mode="Markdown")
 
-    # ----- 3. per WOK channel summaries (4 extra messages, list format + footer) -----
+    # ----- 3. per WOK channel summaries (4 extra messages) -----
     for wok in wok_list:
         wok_chan_stats = {ch: {"input": 0, "completed": 0, "fallout": 0, "prev_input": 0} for ch in channels}
         total_wok_input = 0
@@ -1283,9 +1292,9 @@ def main():
         states={
             SALES_WOK: [CallbackQueryHandler(sales_choose, pattern="^(sales_detail|sales_summary|sales_back)$")],
             DETAIL_WOK: [CallbackQueryHandler(detail_wok_selected, pattern="^wok_")],
-            SALES_CHANNEL: [CallbackQueryHandler(sales_channel_selected, pattern="^chan_")],
             SALES_YEAR: [CallbackQueryHandler(sales_year_selected, pattern="^year_")],
             SALES_MONTH: [CallbackQueryHandler(sales_month_selected, pattern="^month_")],
+            TEAM_LEADER_OPTION: [CallbackQueryHandler(team_leader_option_callback, pattern="^(tl_csv|tl_show)$")],
             SUMMARY_YEAR: [CallbackQueryHandler(summary_year_selected, pattern="^sumyear_")],
             SUMMARY_MONTH: [CallbackQueryHandler(summary_month_selected, pattern="^summonth_")],
         },
