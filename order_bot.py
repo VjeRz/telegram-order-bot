@@ -111,7 +111,8 @@ def get_raw_records():
     return order_sheet.get_all_records()
 
 def get_last_order_date():
-    """Return the latest Tanggal Input from the order sheet as DD/MM/YYYY, or current date if none."""
+    """Return the latest Tanggal Input from the order sheet as DD/MM/YYYY HH:MM,
+       or current datetime if none. Cached for 5 minutes."""
     if not hasattr(get_last_order_date, "cache"):
         get_last_order_date.cache = None
         get_last_order_date.cache_time = None
@@ -119,32 +120,33 @@ def get_last_order_date():
     if get_last_order_date.cache is None or (now - get_last_order_date.cache_time).total_seconds() > 300:
         try:
             records = get_raw_records()
-            latest = None
+            latest_dt = None
             for rec in records:
                 tgl = rec.get("Tanggal Input", "")
                 if not tgl:
                     continue
                 try:
-                    if '-' in tgl:
-                        date_part = tgl.split()[0]
+                    parts = tgl.strip().split()
+                    date_part = parts[0]
+                    time_part = parts[1] if len(parts) > 1 else "00:00:00"
+                    if '-' in date_part:
                         y, m, d = map(int, date_part.split('-'))
-                        dt = datetime(y, m, d)
                     else:
-                        date_part = tgl.split()[0]
                         d, m, y = map(int, date_part.split('/'))
-                        dt = datetime(y, m, d)
-                    if latest is None or dt > latest:
-                        latest = dt
+                    h, minute, sec = map(int, time_part.split(':'))
+                    dt = datetime(y, m, d, h, minute, sec)
+                    if latest_dt is None or dt > latest_dt:
+                        latest_dt = dt
                 except:
                     continue
-            if latest:
-                get_last_order_date.cache = latest.strftime("%d/%m/%Y")
+            if latest_dt:
+                get_last_order_date.cache = latest_dt.strftime("%d/%m/%Y %H:%M")
             else:
-                get_last_order_date.cache = datetime.now().strftime("%d/%m/%Y")
+                get_last_order_date.cache = datetime.now().strftime("%d/%m/%Y %H:%M")
             get_last_order_date.cache_time = now
         except Exception as e:
-            logger.error(f"Error getting last order date: {e}")
-            get_last_order_date.cache = datetime.now().strftime("%d/%m/%Y")
+            logger.error(f"Error getting last order datetime: {e}")
+            get_last_order_date.cache = datetime.now().strftime("%d/%m/%Y %H:%M")
             get_last_order_date.cache_time = now
     return get_last_order_date.cache
 
@@ -366,7 +368,7 @@ async def report_option_callback(update: Update, context: ContextTypes.DEFAULT_T
         await query.message.delete()
         await show_main_menu(update, update.effective_user.id)
         return ConversationHandler.END
-    period = data.split("_")[1]  # "day", "week", "month"
+    period = data.split("_")[1]
     user_id = update.effective_user.id
     await generate_report(update, query.message, user_id, [period])
     await query.delete_message()
@@ -420,7 +422,7 @@ async def send_guide(update: Update, user_id):
         )
     await reply(text, parse_mode="Markdown")
 
-# ---------- REGISTRATION FLOW (unchanged) ----------
+# ---------- REGISTRATION FLOW ----------
 async def register_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.callback_query:
         query = update.callback_query
@@ -762,7 +764,7 @@ async def sales_choose(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return ConversationHandler.END
     return ConversationHandler.END
 
-# ---------- DETAILED WOK HANDLER (for Laporan Detail) ----------
+# ---------- DETAILED WOK HANDLER ----------
 async def detail_wok_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -783,7 +785,6 @@ async def detail_wok_selected(update: Update, context: ContextTypes.DEFAULT_TYPE
         await query.edit_message_text("Pilih tahun:", reply_markup=year_keyboard)
         return SALES_YEAR
     else:
-        # Team Leader: skip channel (force AGENCY)
         context.user_data["report_channel"] = "AGENCY"
         current_year = datetime.now().year
         year_keyboard = InlineKeyboardMarkup([
@@ -828,7 +829,6 @@ async def sales_month_selected(update: Update, context: ContextTypes.DEFAULT_TYP
 
     aggregate_only_roles = ["Manager", "Supervisor", "Inputters", "IT"]
 
-    # --- Manager / Supervisor / Inputters / IT: status breakdown with percentages ---
     if subrole in aggregate_only_roles:
         records = get_raw_records()
         filtered = []
@@ -889,7 +889,6 @@ async def sales_month_selected(update: Update, context: ContextTypes.DEFAULT_TYP
         await processing_msg.edit_text("\n".join(lines))
         return ConversationHandler.END
 
-    # --- Team Leader: offer CSV download or show data ---
     if subrole == "Team Leader":
         context.user_data["tl_wok"] = wok
         context.user_data["tl_year"] = year
@@ -898,7 +897,8 @@ async def sales_month_selected(update: Update, context: ContextTypes.DEFAULT_TYP
 
         option_keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton("📥 Download CSV", callback_data="tl_csv")],
-            [InlineKeyboardButton("📋 Tampilkan Data", callback_data="tl_show")]
+            [InlineKeyboardButton("📋 Tampilkan Data", callback_data="tl_show")],
+            [InlineKeyboardButton("📦 Popular Paket (Agency)", callback_data="tl_paket")]
         ])
         await query.edit_message_text(
             f"WOK: {wok}\n📅 {month_name.upper()} {year}\n\nPilih format laporan:",
@@ -942,11 +942,10 @@ async def team_leader_option_callback(update: Update, context: ContextTypes.DEFA
         except:
             continue
 
-    if not filtered:
-        await query.edit_message_text(f"Tidak ada data untuk WOK: {wok}, Bulan: {month_name} {year}.")
-        return ConversationHandler.END
-
     if action == "tl_csv":
+        if not filtered:
+            await query.edit_message_text(f"Tidak ada data untuk WOK: {wok}, Bulan: {month_name} {year}.")
+            return ConversationHandler.END
         output = io.StringIO()
         writer = csv.writer(output)
         writer.writerow(["Order ID", "STO", "WOK", "Status Order", "Channel Name", "Fallout Reason", "SalesForce", "Tanggal Complete", "Tanggal Input", "Sub Error Code", "Technician Notes", "Paket"])
@@ -971,7 +970,10 @@ async def team_leader_option_callback(update: Update, context: ContextTypes.DEFA
         await query.delete_message()
         return ConversationHandler.END
 
-    else:  # tl_show
+    elif action == "tl_show":
+        if not filtered:
+            await query.edit_message_text(f"Tidak ada data untuk WOK: {wok}, Bulan: {month_name} {year}.")
+            return ConversationHandler.END
         await query.delete_message()
         processing_msg = await query.message.reply_text("⏳ Sedang memproses data...")
 
@@ -1038,6 +1040,68 @@ async def team_leader_option_callback(update: Update, context: ContextTypes.DEFA
         await query.message.reply_text("✅ Selesai. Terima kasih.")
         return ConversationHandler.END
 
+    elif action == "tl_paket":
+        # Popular Paket report for Agency only
+        await query.delete_message()
+        processing_msg = await query.message.reply_text("⏳ Menghitung popular paket (Agency only)...")
+
+        paket_records = []
+        for rec in records:
+            rec_wok = rec.get("WOK", "")
+            rec_channel = rec.get("Channel Name", "").strip().upper()
+            rec_tanggal = rec.get("Tanggal Input", "")
+            if rec_wok != wok or rec_channel != "AGENCY":
+                continue
+            if not rec_tanggal:
+                continue
+            try:
+                if '-' in rec_tanggal:
+                    date_part = rec_tanggal.split()[0]
+                    y, m, d = map(int, date_part.split('-'))
+                else:
+                    date_part = rec_tanggal.split()[0]
+                    d, m, y = map(int, date_part.split('/'))
+                if m == month_num and y == year:
+                    paket_records.append(rec)
+            except:
+                continue
+
+        if not paket_records:
+            await processing_msg.edit_text(f"Tidak ada data AGENCY untuk WOK {wok} pada {month_name} {year}.")
+            return ConversationHandler.END
+
+        total_completed = 0
+        paket_counts = {}
+        for rec in paket_records:
+            status = (rec.get("Status Order", "") or "").strip().upper()
+            if status != "COMPLETED":
+                continue
+            total_completed += 1
+            paket = rec.get("Paket", "").strip()
+            if not paket:
+                continue
+            paket_counts[paket] = paket_counts.get(paket, 0) + 1
+
+        if total_completed == 0:
+            await processing_msg.edit_text(f"Tidak ada order COMPLETED untuk AGENCY di {wok} pada {month_name} {year}.")
+            return ConversationHandler.END
+
+        sorted_paket = sorted(paket_counts.items(), key=lambda x: x[1], reverse=True)[:10]
+        lines = [f"📦 *POPULAR PAKET – AGENCY ONLY*",
+                 f"📍 WOK: {wok}",
+                 f"📅 {month_name.upper()} {year}",
+                 ""]
+        for pkg, cnt in sorted_paket:
+            pct = (cnt / total_completed) * 100
+            lines.append(f"• {pkg}: {cnt} COMPLETED ({pct:.1f}%)")
+        lines.append(f"\n📅 Last Update Data: {get_last_order_date()}")
+        await processing_msg.edit_text("\n".join(lines), parse_mode="Markdown")
+        return ConversationHandler.END
+
+    else:
+        await query.edit_message_text("Perintah tidak dikenal.")
+        return ConversationHandler.END
+
 # ---------- SUMMARY REPORT (Ringkasan) ----------
 async def summary_year_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -1089,7 +1153,7 @@ async def summary_month_selected(update: Update, context: ContextTypes.DEFAULT_T
             pass
         return None, None
 
-    # ----- 1. per WOK summary (list format) -----
+    # ----- 1. per WOK summary -----
     wok_list = ["MANADO TALAUD", "BOLAANG MONGONDOW", "GORONTALO - PAHUWATO", "BITUNG MINAHASA"]
     wok_stats = {}
     total_input = 0
@@ -1141,7 +1205,7 @@ async def summary_month_selected(update: Update, context: ContextTypes.DEFAULT_T
     lines1.append(f"\n\n📅 Last Update Data: {get_last_order_date()}")
     await query.message.reply_text("\n".join(lines1), parse_mode="Markdown")
 
-    # ----- 2. overall per channel summary (list format) -----
+    # ----- 2. overall per channel summary -----
     channels = ["B2B2C&OTHERS", "AGENCY", "GRAPARI", "SOBI AFFILIATE", "WEB&APP"]
     chan_stats = {}
     total_chan_input = 0
@@ -1193,7 +1257,7 @@ async def summary_month_selected(update: Update, context: ContextTypes.DEFAULT_T
     lines2.append(f"\n\n📅 Last Update Data: {get_last_order_date()}")
     await query.message.reply_text("\n".join(lines2), parse_mode="Markdown")
 
-    # ----- 3. per WOK channel summaries (4 extra messages) -----
+    # ----- 3. per WOK channel summaries -----
     for wok in wok_list:
         wok_chan_stats = {ch: {"input": 0, "completed": 0, "fallout": 0, "prev_input": 0} for ch in channels}
         total_wok_input = 0
@@ -1242,6 +1306,55 @@ async def summary_month_selected(update: Update, context: ContextTypes.DEFAULT_T
         lines_wok.append(f"\n• *TOTAL*: Input {total_wok_input} | Cmpl {total_wok_completed} | Flt {total_wok_fallout} | IO/PS {total_wok_completion:.1f}% | Kontrib 100.0% | MoM {total_wok_mom:.1f}%")
         lines_wok.append(f"\n\n📅 Last Update Data: {get_last_order_date()}")
         await query.message.reply_text("\n".join(lines_wok), parse_mode="Markdown")
+
+    # --- NEW: Popular Paket Summary with percentages ---
+    await query.message.reply_text("📦 Menghitung popular paket (COMPLETED)...")
+
+    def get_top_paket_with_pct(records_filter_func, total_completed_orders, top_n=10):
+        paket_counts = {}
+        for rec in records_filter_func:
+            status = (rec.get("Status Order", "") or "").strip().upper()
+            if status != "COMPLETED":
+                continue
+            paket = rec.get("Paket", "").strip()
+            if not paket:
+                continue
+            paket_counts[paket] = paket_counts.get(paket, 0) + 1
+        sorted_paket = sorted(paket_counts.items(), key=lambda x: x[1], reverse=True)
+        result = []
+        for paket, count in sorted_paket[:top_n]:
+            pct = (count / total_completed_orders * 100) if total_completed_orders > 0 else 0
+            result.append((paket, count, pct))
+        return result
+
+    # Global (all WOKs, all channels)
+    global_completed_records = [rec for rec in records if (lambda y,m: y == year and m == month_num)(*extract_date(rec.get("Tanggal Input", "")))]
+    global_total_completed = len(global_completed_records)
+    global_top = get_top_paket_with_pct(global_completed_records, global_total_completed)
+    if global_top:
+        lines_global = [f"📊 *POPULAR PAKET (GLOBAL)*", f"📅 {month_name.upper()} {year}", ""]
+        for paket, count, pct in global_top:
+            lines_global.append(f"• {paket}: {count} COMPLETED ({pct:.1f}%)")
+        lines_global.append(f"\n📅 Last Update Data: {get_last_order_date()}")
+        await query.message.reply_text("\n".join(lines_global), parse_mode="Markdown")
+    else:
+        await query.message.reply_text(f"Tidak ada data COMPLETED untuk popular paket global pada {month_name} {year}.")
+
+    # Per WOK
+    for wok in wok_list:
+        wok_completed_records = [rec for rec in records if
+                                 rec.get("WOK", "") == wok and
+                                 (lambda y,m: y == year and m == month_num)(*extract_date(rec.get("Tanggal Input", "")))]
+        wok_total = len(wok_completed_records)
+        wok_top = get_top_paket_with_pct(wok_completed_records, wok_total)
+        if wok_top:
+            lines_wok = [f"📊 *POPULAR PAKET – {wok}*", f"📅 {month_name.upper()} {year}", ""]
+            for paket, count, pct in wok_top:
+                lines_wok.append(f"• {paket}: {count} COMPLETED ({pct:.1f}%)")
+            lines_wok.append(f"\n📅 Last Update Data: {get_last_order_date()}")
+            await query.message.reply_text("\n".join(lines_wok), parse_mode="Markdown")
+        else:
+            await query.message.reply_text(f"Tidak ada data COMPLETED untuk popular paket di {wok} pada {month_name} {year}.")
 
     return ConversationHandler.END
 
@@ -1320,7 +1433,7 @@ def main():
             DETAIL_WOK: [CallbackQueryHandler(detail_wok_selected, pattern="^wok_")],
             SALES_YEAR: [CallbackQueryHandler(sales_year_selected, pattern="^year_")],
             SALES_MONTH: [CallbackQueryHandler(sales_month_selected, pattern="^month_")],
-            TEAM_LEADER_OPTION: [CallbackQueryHandler(team_leader_option_callback, pattern="^(tl_csv|tl_show)$")],
+            TEAM_LEADER_OPTION: [CallbackQueryHandler(team_leader_option_callback, pattern="^(tl_csv|tl_show|tl_paket)$")],
             SUMMARY_YEAR: [CallbackQueryHandler(summary_year_selected, pattern="^sumyear_")],
             SUMMARY_MONTH: [CallbackQueryHandler(summary_month_selected, pattern="^summonth_")],
         },
