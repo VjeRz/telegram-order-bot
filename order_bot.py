@@ -165,6 +165,7 @@ def find_order_details(order_id: str):
             "tanggal_input": row[8] if len(row) > 8 else "-",
             "sub_error": row[9] if len(row) > 9 else "-",
             "technician_notes": row[10] if len(row) > 10 else "-",
+            "paket": row[11] if len(row) > 11 else "-",
         }
     except Exception as e:
         logger.error(f"Error finding order {clean_input}: {e}")
@@ -557,6 +558,7 @@ async def receive_single_order(update: Update, context: ContextTypes.DEFAULT_TYP
         f"📅 Tanggal Input: {data['tanggal_input']}\n"
         f"🧠 Sub Error Code: {data['sub_error']}\n"
         f"👨🏼‍🔧 Technician Notes: {data['technician_notes']}"
+        f"📦 Paket: {data['paket']}"
     )
     await update.message.reply_text(reply)
     return ConversationHandler.END
@@ -606,6 +608,7 @@ async def process_bulk_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
             f"📅 Tanggal Input: {data['tanggal_input']}\n"
             f"🧠 Sub Error Code: {data['sub_error']}\n"
             f"👨🏼‍🔧 Technician Notes: {data['technician_notes']}"
+            f"📦 Paket: {data['paket']}"
         )
         await update.message.reply_text(reply)
     if not_found:
