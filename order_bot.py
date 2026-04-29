@@ -44,7 +44,7 @@ SALES_MONTH = 24
 SUMMARY_YEAR = 30
 SUMMARY_MONTH = 31
 TEAM_LEADER_OPTION = 32
-REPORT_OPTION = 40   # new state for usage report menu
+REPORT_OPTION = 40
 
 ALL_STATUSES = [
     "PENDING_CUSTOMER_VERIFICATION", "PROVISION_START", "TECH_ASSIGNED",
@@ -282,44 +282,24 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send_guide(update, user_id)
         await show_main_menu(update, user_id)
 
-# ---------- USAGE REPORT MENU (interactive) ----------
+# ---------- USAGE REPORT MENU ----------
 async def usage_report_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
     user_id = update.effective_user.id
     if not can_view_reports(user_id):
-        await update.message.reply_text("Anda tidak memiliki izin untuk melihat laporan penggunaan.")
-        return
+        await query.message.reply_text("Anda tidak memiliki izin untuk melihat laporan penggunaan.")
+        return ConversationHandler.END
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("📆 Harian", callback_data="report_day")],
         [InlineKeyboardButton("📆 Mingguan", callback_data="report_week")],
         [InlineKeyboardButton("📆 Bulanan", callback_data="report_month")],
         [InlineKeyboardButton("🔙 Kembali ke Menu Utama", callback_data="report_back")]
     ])
-    await update.message.reply_text("Pilih periode laporan:", reply_markup=keyboard)
+    await query.message.reply_text("Pilih periode laporan:", reply_markup=keyboard)
     return REPORT_OPTION
 
-async def report_option_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    data = query.data
-    if data == "report_back":
-        await query.message.delete()
-        await show_main_menu(update, update.effective_user.id)
-        return ConversationHandler.END
-    # Call the existing report logic
-    period = data.split("_")[1]  # "day", "week", "month"
-    # Create a fake args list to reuse the report function
-    context.args = [period]
-    # We need to call report but we have a callback query, not a message.
-    # We'll directly generate the report using the stored user_id.
-    user_id = update.effective_user.id
-    args = [period]
-    # Reuse the existing report logic (same as /report)
-    await generate_report(update, query.message, user_id, args)
-    await query.delete_message()
-    return ConversationHandler.END
-
 async def generate_report(update: Update, message, user_id, args):
-    """Reusable report generator (same logic as /report command)."""
     if not can_view_reports(user_id):
         await message.reply_text("Anda tidak memiliki izin untuk melihat laporan.")
         return
@@ -378,6 +358,20 @@ async def generate_report(update: Update, message, user_id, args):
             lines.append(f"👤 {data['name']} ({data['role']}) - {data['count']} pencarian - Durasi: {duration:.0f} menit")
         await message.reply_text("\n".join(lines))
 
+async def report_option_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    data = query.data
+    if data == "report_back":
+        await query.message.delete()
+        await show_main_menu(update, update.effective_user.id)
+        return ConversationHandler.END
+    period = data.split("_")[1]  # "day", "week", "month"
+    user_id = update.effective_user.id
+    await generate_report(update, query.message, user_id, [period])
+    await query.delete_message()
+    return ConversationHandler.END
+
 # ---------- COMBINED GUIDE ----------
 async def send_guide(update: Update, user_id):
     if update.callback_query:
@@ -407,7 +401,7 @@ async def send_guide(update: Update, user_id):
             "Klik tombol 'Cek Banyak Order', lalu masukkan 2 hingga 10 Order ID (dipisah spasi).\n\n"
             "📊 *Laporan Performa Sales*:\n"
             "Klik tombol 'Cek Laporan Sales' dan ikuti menu interaktif (tersedia untuk Supervisor, Team Leader, IT, Manager).\n\n"
-            "📊 *Laporan Penggunaan Bot*:\n"
+            "📊 *Laporan Pengguna Bot*:\n"
             "Klik tombol 'Laporan Pengguna Bot' lalu pilih Harian, Mingguan, atau Bulanan.\n\n"
             "📎 Untuk laporan penggunaan bot, alternatifnya bisa menggunakan perintah /report.\n\n"
             "Untuk daftar perintah lengkap, ketik /help."
@@ -781,7 +775,6 @@ async def detail_wok_selected(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     aggregate_only_roles = ["Manager", "Supervisor", "Inputters", "IT"]
     if subrole in aggregate_only_roles:
-        # For managers: skip channel, go directly to year
         current_year = datetime.now().year
         year_keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton(str(current_year - 1), callback_data=f"year_{current_year-1}"),
@@ -790,7 +783,7 @@ async def detail_wok_selected(update: Update, context: ContextTypes.DEFAULT_TYPE
         await query.edit_message_text("Pilih tahun:", reply_markup=year_keyboard)
         return SALES_YEAR
     else:
-        # For Team Leader: also skip channel (force AGENCY), go directly to year
+        # Team Leader: skip channel (force AGENCY)
         context.user_data["report_channel"] = "AGENCY"
         current_year = datetime.now().year
         year_keyboard = InlineKeyboardMarkup([
@@ -1252,7 +1245,7 @@ async def summary_month_selected(update: Update, context: ContextTypes.DEFAULT_T
 
     return ConversationHandler.END
 
-# ---------- USAGE REPORT (slash command fallback) ----------
+# ---------- USAGE REPORT SLASH COMMAND FALLBACK ----------
 async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if not can_view_reports(user_id):
@@ -1354,7 +1347,7 @@ def main():
     )
     app.add_handler(bulk_conv)
 
-    # Usage report menu conversation
+    # Usage report conversation
     report_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(usage_report_menu, pattern="^menu_usage_report$")],
         states={REPORT_OPTION: [CallbackQueryHandler(report_option_callback, pattern="^report_")]},
