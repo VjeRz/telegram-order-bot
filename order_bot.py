@@ -43,7 +43,8 @@ SALES_YEAR = 23
 SALES_MONTH = 24
 SUMMARY_YEAR = 30
 SUMMARY_MONTH = 31
-TEAM_LEADER_OPTION = 32   # new state for choosing CSV or show data
+TEAM_LEADER_OPTION = 32
+REPORT_OPTION = 40   # new state for usage report menu
 
 ALL_STATUSES = [
     "PENDING_CUSTOMER_VERIFICATION", "PROVISION_START", "TECH_ASSIGNED",
@@ -77,7 +78,6 @@ def get_bot_data_spreadsheet(spreadsheet_name):
 order_sheet = init_order_sheet(ORDER_SHEET_NAME)
 bot_data_spreadsheet = get_bot_data_spreadsheet(BOT_DATA_SHEET_NAME)
 
-# Users and UsageLog sheets
 try:
     users_sheet = bot_data_spreadsheet.worksheet("Users")
 except gspread.WorksheetNotFound:
@@ -239,6 +239,8 @@ def get_main_menu_keyboard(telegram_id):
     ]
     if can_view_sales_report(telegram_id):
         buttons.insert(1, [InlineKeyboardButton("📊 Cek Laporan Sales", callback_data="menu_sales_report")])
+    if can_view_reports(telegram_id):
+        buttons.append([InlineKeyboardButton("📊 Laporan Pengguna Bot", callback_data="menu_usage_report")])
     buttons.append([InlineKeyboardButton("📖 Panduan Pengguna", callback_data="menu_guide")])
     return InlineKeyboardMarkup(buttons)
 
@@ -272,10 +274,109 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "menu_sales_report":
         await query.message.delete()
         await sales_report_main(update, context)
+    elif data == "menu_usage_report":
+        await query.message.delete()
+        await usage_report_menu(update, context)
     elif data == "menu_guide":
         await query.message.delete()
         await send_guide(update, user_id)
         await show_main_menu(update, user_id)
+
+# ---------- USAGE REPORT MENU (interactive) ----------
+async def usage_report_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if not can_view_reports(user_id):
+        await update.message.reply_text("Anda tidak memiliki izin untuk melihat laporan penggunaan.")
+        return
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("📆 Harian", callback_data="report_day")],
+        [InlineKeyboardButton("📆 Mingguan", callback_data="report_week")],
+        [InlineKeyboardButton("📆 Bulanan", callback_data="report_month")],
+        [InlineKeyboardButton("🔙 Kembali ke Menu Utama", callback_data="report_back")]
+    ])
+    await update.message.reply_text("Pilih periode laporan:", reply_markup=keyboard)
+    return REPORT_OPTION
+
+async def report_option_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    data = query.data
+    if data == "report_back":
+        await query.message.delete()
+        await show_main_menu(update, update.effective_user.id)
+        return ConversationHandler.END
+    # Call the existing report logic
+    period = data.split("_")[1]  # "day", "week", "month"
+    # Create a fake args list to reuse the report function
+    context.args = [period]
+    # We need to call report but we have a callback query, not a message.
+    # We'll directly generate the report using the stored user_id.
+    user_id = update.effective_user.id
+    args = [period]
+    # Reuse the existing report logic (same as /report)
+    await generate_report(update, query.message, user_id, args)
+    await query.delete_message()
+    return ConversationHandler.END
+
+async def generate_report(update: Update, message, user_id, args):
+    """Reusable report generator (same logic as /report command)."""
+    if not can_view_reports(user_id):
+        await message.reply_text("Anda tidak memiliki izin untuk melihat laporan.")
+        return
+    now = datetime.now()
+    if args[0] == "day":
+        start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        end = start + timedelta(days=1)
+    elif args[0] == "week":
+        start = now - timedelta(days=now.weekday())
+        start = start.replace(hour=0, minute=0, second=0, microsecond=0)
+        end = start + timedelta(days=7)
+    elif args[0] == "month":
+        start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        next_month = start.replace(day=28) + timedelta(days=4)
+        end = next_month - timedelta(days=next_month.day)
+        end = end.replace(hour=23, minute=59, second=59)
+    else:
+        await message.reply_text("Periode tidak dikenal.")
+        return
+    logs = usage_sheet.get_all_records()
+    filtered = []
+    for log in logs:
+        try:
+            ts = datetime.strptime(log.get("Timestamp"), "%Y-%m-%d %H:%M:%S")
+            if start <= ts < end:
+                filtered.append(log)
+        except:
+            continue
+    if not filtered:
+        await message.reply_text(f"Tidak ada data penggunaan untuk periode {args[0]}.")
+        return
+    summary = {}
+    for log in filtered:
+        uid = log.get("TelegramID")
+        if uid not in summary:
+            summary[uid] = {"name": log.get("UserName"), "role": log.get("SubRole"), "count": 0, "first": None, "last": None}
+        summary[uid]["count"] += 1
+        ts = datetime.strptime(log.get("Timestamp"), "%Y-%m-%d %H:%M:%S")
+        if not summary[uid]["first"] or ts < summary[uid]["first"]:
+            summary[uid]["first"] = ts
+        if not summary[uid]["last"] or ts > summary[uid]["last"]:
+            summary[uid]["last"] = ts
+    if args[0] == "month":
+        output = io.StringIO()
+        writer = csv.writer(output)
+        writer.writerow(["TelegramID", "Name", "SubRole", "Number of lookups", "First lookup", "Last lookup", "Duration (minutes)"])
+        for uid, data in summary.items():
+            duration = (data["last"] - data["first"]).total_seconds() / 60 if data["first"] and data["last"] else 0
+            writer.writerow([uid, data["name"], data["role"], data["count"], data["first"].strftime("%Y-%m-%d %H:%M:%S") if data["first"] else "", data["last"].strftime("%Y-%m-%d %H:%M:%S") if data["last"] else "", round(duration, 2)])
+        output.seek(0)
+        await message.reply_document(document=output, filename=f"report_{args[0]}.csv", caption=f"Laporan untuk {args[0]}")
+    else:
+        lines = [f"📊 Laporan untuk {args[0]}\n"]
+        for uid, data in summary.items():
+            duration = (data["last"] - data["first"]).total_seconds() / 60 if data["first"] and data["last"] else 0
+            lines.append(f"👤 {data['name']} ({data['role']}) - {data['count']} pencarian - Durasi: {duration:.0f} menit")
+        await message.reply_text("\n".join(lines))
 
 # ---------- COMBINED GUIDE ----------
 async def send_guide(update: Update, user_id):
@@ -306,7 +407,9 @@ async def send_guide(update: Update, user_id):
             "Klik tombol 'Cek Banyak Order', lalu masukkan 2 hingga 10 Order ID (dipisah spasi).\n\n"
             "📊 *Laporan Performa Sales*:\n"
             "Klik tombol 'Cek Laporan Sales' dan ikuti menu interaktif (tersedia untuk Supervisor, Team Leader, IT, Manager).\n\n"
-            "📎 Untuk laporan penggunaan bot, gunakan perintah /report day|week|month|from to.\n\n"
+            "📊 *Laporan Penggunaan Bot*:\n"
+            "Klik tombol 'Laporan Pengguna Bot' lalu pilih Harian, Mingguan, atau Bulanan.\n\n"
+            "📎 Untuk laporan penggunaan bot, alternatifnya bisa menggunakan perintah /report.\n\n"
             "Untuk daftar perintah lengkap, ketik /help."
         )
     else:
@@ -323,7 +426,7 @@ async def send_guide(update: Update, user_id):
         )
     await reply(text, parse_mode="Markdown")
 
-# ---------- REGISTRATION FLOW ----------
+# ---------- REGISTRATION FLOW (unchanged) ----------
 async def register_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.callback_query:
         query = update.callback_query
@@ -688,7 +791,6 @@ async def detail_wok_selected(update: Update, context: ContextTypes.DEFAULT_TYPE
         return SALES_YEAR
     else:
         # For Team Leader: also skip channel (force AGENCY), go directly to year
-        # We'll set channel as AGENCY implicitly
         context.user_data["report_channel"] = "AGENCY"
         current_year = datetime.now().year
         year_keyboard = InlineKeyboardMarkup([
@@ -729,8 +831,6 @@ async def sales_month_selected(update: Update, context: ContextTypes.DEFAULT_TYP
     month_name = month_names[month_num - 1]
     year = context.user_data.get("report_year", datetime.now().year)
     wok = context.user_data["report_wok"]
-    # For manager roles, channel is irrelevant; for Team Leader it's AGENCY
-    channel = context.user_data.get("report_channel", "")
     subrole = context.user_data.get("report_subrole")
 
     aggregate_only_roles = ["Manager", "Supervisor", "Inputters", "IT"]
@@ -796,15 +896,13 @@ async def sales_month_selected(update: Update, context: ContextTypes.DEFAULT_TYP
         await processing_msg.edit_text("\n".join(lines))
         return ConversationHandler.END
 
-    # --- Team Leader: offer CSV download or show data (per-salesperson list) ---
+    # --- Team Leader: offer CSV download or show data ---
     if subrole == "Team Leader":
-        # Store filter parameters in context for later use
         context.user_data["tl_wok"] = wok
         context.user_data["tl_year"] = year
         context.user_data["tl_month_num"] = month_num
         context.user_data["tl_month_name"] = month_name
 
-        # Show inline keyboard with two options
         option_keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton("📥 Download CSV", callback_data="tl_csv")],
             [InlineKeyboardButton("📋 Tampilkan Data", callback_data="tl_show")]
@@ -815,13 +913,12 @@ async def sales_month_selected(update: Update, context: ContextTypes.DEFAULT_TYP
         )
         return TEAM_LEADER_OPTION
 
-    # (Other roles – not expected here)
     return ConversationHandler.END
 
 async def team_leader_option_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    action = query.data  # "tl_csv" or "tl_show"
+    action = query.data
 
     wok = context.user_data.get("tl_wok")
     year = context.user_data.get("tl_year")
@@ -832,7 +929,6 @@ async def team_leader_option_callback(update: Update, context: ContextTypes.DEFA
         await query.edit_message_text("Terjadi kesalahan. Silakan coba lagi.")
         return ConversationHandler.END
 
-    # Get filtered orders
     records = get_order_sheet_records()
     filtered = []
     for rec in records:
@@ -848,7 +944,6 @@ async def team_leader_option_callback(update: Update, context: ContextTypes.DEFA
             else:
                 date_part = rec_tanggal_input.split()[0]
                 d, m, y = map(int, date_part.split('/'))
-            # Team Leader always AGENCY
             if m == month_num and y == year and rec_wok == wok and rec_channel == "AGENCY":
                 filtered.append(rec)
         except:
@@ -859,10 +954,8 @@ async def team_leader_option_callback(update: Update, context: ContextTypes.DEFA
         return ConversationHandler.END
 
     if action == "tl_csv":
-        # Generate CSV
         output = io.StringIO()
         writer = csv.writer(output)
-        # Header
         writer.writerow(["Order ID", "STO", "WOK", "Status Order", "Channel Name", "Fallout Reason", "SalesForce", "Tanggal Complete", "Tanggal Input", "Sub Error Code", "Technician Notes", "Paket"])
         for rec in filtered:
             writer.writerow([
@@ -885,7 +978,7 @@ async def team_leader_option_callback(update: Update, context: ContextTypes.DEFA
         await query.delete_message()
         return ConversationHandler.END
 
-    else:  # tl_show – original per-salesperson list
+    else:  # tl_show
         await query.delete_message()
         processing_msg = await query.message.reply_text("⏳ Sedang memproses data...")
 
@@ -1159,7 +1252,7 @@ async def summary_month_selected(update: Update, context: ContextTypes.DEFAULT_T
 
     return ConversationHandler.END
 
-# ---------- USAGE REPORT ----------
+# ---------- USAGE REPORT (slash command fallback) ----------
 async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if not can_view_reports(user_id):
@@ -1167,69 +1260,9 @@ async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     args = context.args
     if not args:
-        await update.message.reply_text("Penggunaan: /report [day|week|month|YYYY-MM-DD YYYY-MM-DD]")
+        await update.message.reply_text("Penggunaan: /report [day|week|month]")
         return
-    now = datetime.now()
-    if args[0] == "day":
-        start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-        end = start + timedelta(days=1)
-    elif args[0] == "week":
-        start = now - timedelta(days=now.weekday())
-        start = start.replace(hour=0, minute=0, second=0, microsecond=0)
-        end = start + timedelta(days=7)
-    elif args[0] == "month":
-        start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-        next_month = start.replace(day=28) + timedelta(days=4)
-        end = next_month - timedelta(days=next_month.day)
-        end = end.replace(hour=23, minute=59, second=59)
-    else:
-        if len(args) < 2:
-            await update.message.reply_text("Untuk rentang kustom: /report YYYY-MM-DD YYYY-MM-DD")
-            return
-        try:
-            start = datetime.strptime(args[0], "%Y-%m-%d")
-            end = datetime.strptime(args[1], "%Y-%m-%d") + timedelta(days=1)
-        except ValueError:
-            await update.message.reply_text("Format tanggal salah. Gunakan YYYY-MM-DD.")
-            return
-    logs = usage_sheet.get_all_records()
-    filtered = []
-    for log in logs:
-        try:
-            ts = datetime.strptime(log.get("Timestamp"), "%Y-%m-%d %H:%M:%S")
-            if start <= ts < end:
-                filtered.append(log)
-        except:
-            continue
-    if not filtered:
-        await update.message.reply_text("Tidak ada data penggunaan dalam periode ini.")
-        return
-    summary = {}
-    for log in filtered:
-        uid = log.get("TelegramID")
-        if uid not in summary:
-            summary[uid] = {"name": log.get("UserName"), "role": log.get("SubRole"), "count": 0, "first": None, "last": None}
-        summary[uid]["count"] += 1
-        ts = datetime.strptime(log.get("Timestamp"), "%Y-%m-%d %H:%M:%S")
-        if not summary[uid]["first"] or ts < summary[uid]["first"]:
-            summary[uid]["first"] = ts
-        if not summary[uid]["last"] or ts > summary[uid]["last"]:
-            summary[uid]["last"] = ts
-    if args[0] == "month" or len(args) > 1:
-        output = io.StringIO()
-        writer = csv.writer(output)
-        writer.writerow(["TelegramID", "Name", "SubRole", "Number of lookups", "First lookup", "Last lookup", "Duration (minutes)"])
-        for uid, data in summary.items():
-            duration = (data["last"] - data["first"]).total_seconds() / 60 if data["first"] and data["last"] else 0
-            writer.writerow([uid, data["name"], data["role"], data["count"], data["first"].strftime("%Y-%m-%d %H:%M:%S") if data["first"] else "", data["last"].strftime("%Y-%m-%d %H:%M:%S") if data["last"] else "", round(duration, 2)])
-        output.seek(0)
-        await update.message.reply_document(document=output, filename=f"report_{args[0]}.csv", caption=f"Laporan untuk {args[0]}")
-    else:
-        lines = [f"📊 Laporan untuk {args[0]}\n"]
-        for uid, data in summary.items():
-            duration = (data["last"] - data["first"]).total_seconds() / 60 if data["first"] and data["last"] else 0
-            lines.append(f"👤 {data['name']} ({data['role']}) - {data['count']} pencarian - Durasi: {duration:.0f} menit")
-        await update.message.reply_text("\n".join(lines))
+    await generate_report(update, update.message, user_id, args)
 
 # ---------- GENERAL COMMANDS ----------
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1320,6 +1353,15 @@ def main():
         allow_reentry=True,
     )
     app.add_handler(bulk_conv)
+
+    # Usage report menu conversation
+    report_conv = ConversationHandler(
+        entry_points=[CallbackQueryHandler(usage_report_menu, pattern="^menu_usage_report$")],
+        states={REPORT_OPTION: [CallbackQueryHandler(report_option_callback, pattern="^report_")]},
+        fallbacks=[CommandHandler("cancel", cancel)],
+        allow_reentry=True,
+    )
+    app.add_handler(report_conv)
 
     # Main menu callback
     app.add_handler(CallbackQueryHandler(menu_callback, pattern="^menu_"))
