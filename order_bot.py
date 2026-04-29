@@ -125,20 +125,16 @@ def get_last_order_date():
                 tgl = rec.get("Tanggal Input", "")
                 if not tgl:
                     continue
-                try:
-                    parts = tgl.strip().split()
-                    date_part = parts[0]
-                    time_part = parts[1] if len(parts) > 1 else "00:00:00"
-                    if '-' in date_part:
-                        y, m, d = map(int, date_part.split('-'))
-                    else:
-                        d, m, y = map(int, date_part.split('/'))
-                    h, minute, sec = map(int, time_part.split(':'))
-                    dt = datetime(y, m, d, h, minute, sec)
-                    if latest_dt is None or dt > latest_dt:
-                        latest_dt = dt
-                except:
-                    continue
+                # Try to parse with datetime.strptime for robustness
+                tgl_clean = clean_text(tgl)
+                for fmt in ["%d/%m/%Y %H:%M", "%d/%m/%Y", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d"]:
+                    try:
+                        dt = datetime.strptime(tgl_clean, fmt)
+                        if latest_dt is None or dt > latest_dt:
+                            latest_dt = dt
+                        break
+                    except:
+                        continue
             if latest_dt:
                 get_last_order_date.cache = latest_dt.strftime("%d/%m/%Y %H:%M")
             else:
@@ -1041,9 +1037,9 @@ async def team_leader_option_callback(update: Update, context: ContextTypes.DEFA
         return ConversationHandler.END
 
     elif action == "tl_paket":
-        # Popular Paket report for Agency only
+        # Popular Paket report for Agency only – ALL packages (no limit)
         await query.delete_message()
-        processing_msg = await query.message.reply_text("⏳ Menghitung popular paket (Agency only)...")
+        processing_msg = await query.message.reply_text("⏳ Menghitung semua paket COMPLETED (Agency only)...")
 
         paket_records = []
         for rec in records:
@@ -1054,14 +1050,16 @@ async def team_leader_option_callback(update: Update, context: ContextTypes.DEFA
                 continue
             if not rec_tanggal:
                 continue
+            # Robust date parsing
             try:
-                if '-' in rec_tanggal:
-                    date_part = rec_tanggal.split()[0]
-                    y, m, d = map(int, date_part.split('-'))
-                else:
-                    date_part = rec_tanggal.split()[0]
-                    d, m, y = map(int, date_part.split('/'))
-                if m == month_num and y == year:
+                dt = None
+                for fmt in ["%d/%m/%Y %H:%M", "%d/%m/%Y", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d"]:
+                    try:
+                        dt = datetime.strptime(rec_tanggal.strip(), fmt)
+                        break
+                    except:
+                        continue
+                if dt and dt.year == year and dt.month == month_num:
                     paket_records.append(rec)
             except:
                 continue
@@ -1086,14 +1084,15 @@ async def team_leader_option_callback(update: Update, context: ContextTypes.DEFA
             await processing_msg.edit_text(f"Tidak ada order COMPLETED untuk AGENCY di {wok} pada {month_name} {year}.")
             return ConversationHandler.END
 
-        sorted_paket = sorted(paket_counts.items(), key=lambda x: x[1], reverse=True)[:10]
-        lines = [f"📦 *POPULAR PAKET – AGENCY ONLY*",
+        # Show ALL packages (no limit)
+        sorted_paket = sorted(paket_counts.items(), key=lambda x: x[1], reverse=True)
+        lines = [f"📦 *SEMUA PAKET COMPLETED – AGENCY ONLY*",
                  f"📍 WOK: {wok}",
                  f"📅 {month_name.upper()} {year}",
                  ""]
         for pkg, cnt in sorted_paket:
             pct = (cnt / total_completed) * 100
-            lines.append(f"• {pkg}: {cnt} COMPLETED ({pct:.1f}%)")
+            lines.append(f"• {pkg}: {cnt} ({pct:.1f}%)")
         lines.append(f"\n📅 Last Update Data: {get_last_order_date()}")
         await processing_msg.edit_text("\n".join(lines), parse_mode="Markdown")
         return ConversationHandler.END
@@ -1307,54 +1306,99 @@ async def summary_month_selected(update: Update, context: ContextTypes.DEFAULT_T
         lines_wok.append(f"\n\n📅 Last Update Data: {get_last_order_date()}")
         await query.message.reply_text("\n".join(lines_wok), parse_mode="Markdown")
 
-    # --- NEW: Popular Paket Summary with percentages ---
-    await query.message.reply_text("📦 Menghitung popular paket (COMPLETED)...")
+    # --- Popular Paket Summary – ALL COMPLETED packages (no limit) ---
+    await query.message.reply_text("📦 Menghitung semua paket dengan status COMPLETED...")
 
-    def get_top_paket_with_pct(records_filter_func, total_completed_orders, top_n=10):
+    def clean_field(s):
+        if not s:
+            return ""
+        s = re.sub(r'[\u200b\u00a0\u200c\u200d]', '', str(s))
+        return s.strip()
+
+    def robust_extract_date(date_str):
+        if not date_str:
+            return None, None
+        date_str = clean_field(date_str)
+        for fmt in ["%d/%m/%Y %H:%M", "%d/%m/%Y", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d"]:
+            try:
+                dt = datetime.strptime(date_str, fmt)
+                return dt.year, dt.month
+            except ValueError:
+                continue
+        try:
+            parts = date_str.split()
+            date_part = parts[0]
+            if '-' in date_part:
+                y, m, d = map(int, date_part.split('-'))
+                return y, m
+            else:
+                d, m, y = map(int, date_part.split('/'))
+                return y, m
+        except:
+            return None, None
+
+    def get_all_paket_with_pct(records_filter_func, total_completed_orders):
         paket_counts = {}
         for rec in records_filter_func:
-            status = (rec.get("Status Order", "") or "").strip().upper()
+            status = clean_field(rec.get("Status Order", "")).upper()
             if status != "COMPLETED":
                 continue
-            paket = rec.get("Paket", "").strip()
+            paket = clean_field(rec.get("Paket", ""))
             if not paket:
                 continue
             paket_counts[paket] = paket_counts.get(paket, 0) + 1
         sorted_paket = sorted(paket_counts.items(), key=lambda x: x[1], reverse=True)
         result = []
-        for paket, count in sorted_paket[:top_n]:
+        for paket, count in sorted_paket:
             pct = (count / total_completed_orders * 100) if total_completed_orders > 0 else 0
             result.append((paket, count, pct))
         return result
 
-    # Global (all WOKs, all channels)
-    global_completed_records = [rec for rec in records if (lambda y,m: y == year and m == month_num)(*extract_date(rec.get("Tanggal Input", "")))]
-    global_total_completed = len(global_completed_records)
-    global_top = get_top_paket_with_pct(global_completed_records, global_total_completed)
-    if global_top:
-        lines_global = [f"📊 *POPULAR PAKET (GLOBAL)*", f"📅 {month_name.upper()} {year}", ""]
-        for paket, count, pct in global_top:
-            lines_global.append(f"• {paket}: {count} COMPLETED ({pct:.1f}%)")
-        lines_global.append(f"\n📅 Last Update Data: {get_last_order_date()}")
-        await query.message.reply_text("\n".join(lines_global), parse_mode="Markdown")
+    # Global
+    global_completed_records = []
+    for rec in records:
+        tgl = rec.get("Tanggal Input", "")
+        y, m = robust_extract_date(tgl)
+        if y == year and m == month_num:
+            status = clean_field(rec.get("Status Order", "")).upper()
+            if status == "COMPLETED":
+                global_completed_records.append(rec)
+
+    global_total = len(global_completed_records)
+    logger.info(f"Global completed orders for {month_name} {year}: {global_total}")
+
+    global_pakets = get_all_paket_with_pct(global_completed_records, global_total)
+    if global_pakets:
+        lines = [f"📊 *SEMUA PAKET COMPLETED (GLOBAL)*", f"📅 {month_name.upper()} {year}", ""]
+        for paket, count, pct in global_pakets:
+            lines.append(f"• {paket}: {count} ({pct:.1f}%)")
+        lines.append(f"\n📅 Last Update Data: {get_last_order_date()}")
+        await query.message.reply_text("\n".join(lines), parse_mode="Markdown")
     else:
-        await query.message.reply_text(f"Tidak ada data COMPLETED untuk popular paket global pada {month_name} {year}.")
+        await query.message.reply_text(f"Tidak ada order COMPLETED untuk periode {month_name} {year}.")
 
     # Per WOK
     for wok in wok_list:
-        wok_completed_records = [rec for rec in records if
-                                 rec.get("WOK", "") == wok and
-                                 (lambda y,m: y == year and m == month_num)(*extract_date(rec.get("Tanggal Input", "")))]
-        wok_total = len(wok_completed_records)
-        wok_top = get_top_paket_with_pct(wok_completed_records, wok_total)
-        if wok_top:
-            lines_wok = [f"📊 *POPULAR PAKET – {wok}*", f"📅 {month_name.upper()} {year}", ""]
-            for paket, count, pct in wok_top:
-                lines_wok.append(f"• {paket}: {count} COMPLETED ({pct:.1f}%)")
-            lines_wok.append(f"\n📅 Last Update Data: {get_last_order_date()}")
-            await query.message.reply_text("\n".join(lines_wok), parse_mode="Markdown")
+        wok_completed = []
+        for rec in records:
+            if rec.get("WOK", "") != wok:
+                continue
+            tgl = rec.get("Tanggal Input", "")
+            y, m = robust_extract_date(tgl)
+            if y == year and m == month_num:
+                status = clean_field(rec.get("Status Order", "")).upper()
+                if status == "COMPLETED":
+                    wok_completed.append(rec)
+        wok_total = len(wok_completed)
+        wok_pakets = get_all_paket_with_pct(wok_completed, wok_total)
+        if wok_pakets:
+            lines = [f"📊 *SEMUA PAKET COMPLETED – {wok}*", f"📅 {month_name.upper()} {year}", ""]
+            for paket, count, pct in wok_pakets:
+                lines.append(f"• {paket}: {count} ({pct:.1f}%)")
+            lines.append(f"\n📅 Last Update Data: {get_last_order_date()}")
+            await query.message.reply_text("\n".join(lines), parse_mode="Markdown")
         else:
-            await query.message.reply_text(f"Tidak ada data COMPLETED untuk popular paket di {wok} pada {month_name} {year}.")
+            await query.message.reply_text(f"Tidak ada order COMPLETED di {wok} pada {month_name} {year}.")
 
     return ConversationHandler.END
 
