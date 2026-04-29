@@ -557,7 +557,7 @@ async def receive_single_order(update: Update, context: ContextTypes.DEFAULT_TYP
         f"📅 Tanggal Complete: {data['tanggal_complete']}\n"
         f"📅 Tanggal Input: {data['tanggal_input']}\n"
         f"🧠 Sub Error Code: {data['sub_error']}\n"
-        f"👨🏼‍🔧 Technician Notes: {data['technician_notes']}"
+        f"👨🏼‍🔧 Technician Notes: {data['technician_notes']}\n"
         f"📦 Paket: {data['paket']}"
     )
     await update.message.reply_text(reply)
@@ -607,7 +607,7 @@ async def process_bulk_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
             f"📅 Tanggal Complete: {data['tanggal_complete']}\n"
             f"📅 Tanggal Input: {data['tanggal_input']}\n"
             f"🧠 Sub Error Code: {data['sub_error']}\n"
-            f"👨🏼‍🔧 Technician Notes: {data['technician_notes']}"
+            f"👨🏼‍🔧 Technician Notes: {data['technician_notes']}\n"
             f"📦 Paket: {data['paket']}"
         )
         await update.message.reply_text(reply)
