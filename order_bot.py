@@ -749,7 +749,7 @@ async def sales_report_main(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.message.reply_text("Pilih jenis laporan:", reply_markup=InlineKeyboardMarkup(keyboard))
     return SALES_WOK
 
-# ---------- GRAPARI PERFORMANCE (per STO) ----------
+# ---------- GRAPARI PERFORMANCE (per STO) - FIXED YEAR->MONTH----------
 async def grapari_sto_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -764,7 +764,7 @@ async def grapari_sto_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("2026", callback_data="stoyear_2026")]
     ]
     year_keyboard = InlineKeyboardMarkup(year_buttons)
-    await query.message.reply_text("Pilih tahun:", reply_markup=year_keyboard)
+    await query.edit_message_text("Pilih tahun:", reply_markup=year_keyboard)
     return GRAPARI_STO_YEAR
 
 async def grapari_sto_year_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -933,7 +933,7 @@ async def grapari_sto_option_callback(update: Update, context: ContextTypes.DEFA
         await query.edit_message_text("\n".join(lines), parse_mode="Markdown")
         return ConversationHandler.END
 
-# ---------- SALES CHOOSE (handles all main sales report options) ----------
+# ---------- SALES CHOOSE ----------
 async def sales_choose(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
