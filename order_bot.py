@@ -47,6 +47,7 @@ TEAM_LEADER_OPTION = 32
 REPORT_OPTION = 40
 GRAPARI_STO_YEAR = 50
 GRAPARI_STO_MONTH = 51
+GRAPARI_STO_OPTION = 52   # after month: choose summary or CSV
 
 ALL_STATUSES = [
     "PENDING_CUSTOMER_VERIFICATION", "PROVISION_START", "TECH_ASSIGNED",
@@ -760,7 +761,6 @@ async def grapari_sto_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.reply_text("Anda tidak memiliki akses ke laporan ini.")
         return ConversationHandler.END
 
-    # Only show 2025 and 2026 as requested
     year_buttons = [
         [InlineKeyboardButton("2025", callback_data="stoyear_2025")],
         [InlineKeyboardButton("2026", callback_data="stoyear_2026")]
@@ -799,6 +799,30 @@ async def grapari_sto_month_selected(update: Update, context: ContextTypes.DEFAU
                    "Juli", "Agustus", "September", "Oktober", "November", "Desember"]
     month_name = month_names[month_num - 1]
     year = context.user_data.get("grapari_sto_year", datetime.now().year)
+    context.user_data["grapari_sto_month_num"] = month_num
+    context.user_data["grapari_sto_month_name"] = month_name
+
+    option_keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("📊 Lihat Ringkasan", callback_data="sto_summary")],
+        [InlineKeyboardButton("📥 Download CSV", callback_data="sto_csv")]
+    ])
+    await query.edit_message_text(
+        f"📅 {month_name.upper()} {year}\n\nPilih format laporan:",
+        reply_markup=option_keyboard
+    )
+    return GRAPARI_STO_OPTION
+
+async def grapari_sto_option_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    action = query.data
+    year = context.user_data.get("grapari_sto_year")
+    month_num = context.user_data.get("grapari_sto_month_num")
+    month_name = context.user_data.get("grapari_sto_month_name")
+
+    if not year or not month_num:
+        await query.edit_message_text("Terjadi kesalahan. Silakan coba lagi.")
+        return ConversationHandler.END
 
     records = get_raw_records()
     prev_month = month_num - 1 if month_num > 1 else 12
@@ -816,60 +840,100 @@ async def grapari_sto_month_selected(update: Update, context: ContextTypes.DEFAU
                 continue
         return None, None
 
-    sto_stats = {}
-    total_input = 0
-    total_completed = 0
-    total_fallout = 0
+    if action == "sto_csv":
+        # Collect all orders (all statuses) for GRAPARI channel, selected year/month
+        csv_records = []
+        for rec in records:
+            channel = rec.get("Channel Name", "").strip().upper()
+            if channel != "GRAPARI":
+                continue
+            tgl = rec.get("Tanggal Input", "")
+            y, m = extract_date(tgl)
+            if y == year and m == month_num:
+                csv_records.append(rec)
+        if not csv_records:
+            await query.edit_message_text(f"Tidak ada data GRAPARI untuk {month_name} {year}.")
+            return ConversationHandler.END
 
-    for rec in records:
-        channel = rec.get("Channel Name", "").strip().upper()
-        if channel != "GRAPARI":
-            continue
-        sto = rec.get("STO", "").strip()
-        if not sto:
-            continue
-        tgl = rec.get("Tanggal Input", "")
-        y, m = extract_date(tgl)
-        if y is None or m is None:
-            continue
-        status = (rec.get("Status Order", "") or "").strip().upper()
-        if y == year and m == month_num:
-            total_input += 1
-            if status == "COMPLETED":
-                total_completed += 1
-            elif status == "FALLOUT":
-                total_fallout += 1
-            if sto not in sto_stats:
-                sto_stats[sto] = {"input": 0, "completed": 0, "fallout": 0, "prev_input": 0}
-            sto_stats[sto]["input"] += 1
-            if status == "COMPLETED":
-                sto_stats[sto]["completed"] += 1
-            elif status == "FALLOUT":
-                sto_stats[sto]["fallout"] += 1
-        if y == prev_year and m == prev_month:
-            if sto not in sto_stats:
-                sto_stats[sto] = {"input": 0, "completed": 0, "fallout": 0, "prev_input": 0}
-            sto_stats[sto]["prev_input"] += 1
+        output = io.StringIO()
+        writer = csv.writer(output)
+        writer.writerow(["Order ID", "STO", "WOK", "Status Order", "Channel Name", "Fallout Reason", "SalesForce", "Tanggal Complete", "Tanggal Input", "Sub Error Code", "Technician Notes", "Paket"])
+        for rec in csv_records:
+            writer.writerow([
+                rec.get("Order ID", ""),
+                rec.get("STO", ""),
+                rec.get("WOK", ""),
+                rec.get("Status Order", ""),
+                rec.get("Channel Name", ""),
+                rec.get("Fallout Reason", ""),
+                rec.get("SalesForce", ""),
+                rec.get("Tanggal Complete", ""),
+                rec.get("Tanggal Input", ""),
+                rec.get("Sub Error Code", ""),
+                rec.get("Technician Notes", ""),
+                rec.get("Paket", "")
+            ])
+        output.seek(0)
+        filename = f"grapari_sto_{year}_{month_num}.csv"
+        await query.message.reply_document(document=output, filename=filename, caption=f"📊 Data GRAPARI - {month_name} {year}")
+        await query.delete_message()
+        return ConversationHandler.END
 
-    sorted_stos = sorted(sto_stats.items(), key=lambda x: x[1]["input"], reverse=True)
-    lines = [f"📊 *RINGKASAN PER STO (GRAPARI)*", f"📅 {month_name.upper()} {year}", ""]
-    for sto, stats in sorted_stos:
-        inp = stats["input"]
-        comp = stats["completed"]
-        flt = stats["fallout"]
-        prev = stats["prev_input"]
-        completion = (comp / inp * 100) if inp > 0 else 0
-        contrib = (inp / total_input * 100) if total_input > 0 else 0
-        mom = ((inp - prev) / prev * 100) if prev > 0 else (100 if inp > 0 else 0)
-        lines.append(f"• *{sto}*: Input {inp} | Comp {comp} | FO {flt} | IO/PS {completion:.1f}% | Kontrib {contrib:.1f}% | MoM {mom:.1f}%")
-    total_completion = (total_completed / total_input * 100) if total_input > 0 else 0
-    total_prev = sum(stats.get("prev_input", 0) for stats in sto_stats.values())
-    total_mom = ((total_input - total_prev) / total_prev * 100) if total_prev > 0 else (100 if total_input > 0 else 0)
-    lines.append(f"\n• *TOTAL*: Input {total_input} | Comp {total_completed} | FO {total_fallout} | IO/PS {total_completion:.1f}% | Kontrib 100.0% | MoM {total_mom:.1f}%")
-    lines.append(f"\n📅 Last Update Data: {get_last_order_date()}")
+    else:  # sto_summary
+        sto_stats = {}
+        total_input = 0
+        total_completed = 0
+        total_fallout = 0
 
-    await query.message.reply_text("\n".join(lines), parse_mode="Markdown")
-    return ConversationHandler.END
+        for rec in records:
+            channel = rec.get("Channel Name", "").strip().upper()
+            if channel != "GRAPARI":
+                continue
+            sto = rec.get("STO", "").strip()
+            if not sto:
+                continue
+            tgl = rec.get("Tanggal Input", "")
+            y, m = extract_date(tgl)
+            if y is None or m is None:
+                continue
+            status = (rec.get("Status Order", "") or "").strip().upper()
+            if y == year and m == month_num:
+                total_input += 1
+                if status == "COMPLETED":
+                    total_completed += 1
+                elif status == "FALLOUT":
+                    total_fallout += 1
+                if sto not in sto_stats:
+                    sto_stats[sto] = {"input": 0, "completed": 0, "fallout": 0, "prev_input": 0}
+                sto_stats[sto]["input"] += 1
+                if status == "COMPLETED":
+                    sto_stats[sto]["completed"] += 1
+                elif status == "FALLOUT":
+                    sto_stats[sto]["fallout"] += 1
+            if y == prev_year and m == prev_month:
+                if sto not in sto_stats:
+                    sto_stats[sto] = {"input": 0, "completed": 0, "fallout": 0, "prev_input": 0}
+                sto_stats[sto]["prev_input"] += 1
+
+        sorted_stos = sorted(sto_stats.items(), key=lambda x: x[1]["input"], reverse=True)
+        lines = [f"📊 *RINGKASAN PER STO (GRAPARI)*", f"📅 {month_name.upper()} {year}", ""]
+        for sto, stats in sorted_stos:
+            inp = stats["input"]
+            comp = stats["completed"]
+            flt = stats["fallout"]
+            prev = stats["prev_input"]
+            completion = (comp / inp * 100) if inp > 0 else 0
+            contrib = (inp / total_input * 100) if total_input > 0 else 0
+            mom = ((inp - prev) / prev * 100) if prev > 0 else (100 if inp > 0 else 0)
+            lines.append(f"• *{sto}*: Input {inp} | Comp {comp} | FO {flt} | IO/PS {completion:.1f}% | Kontrib {contrib:.1f}% | MoM {mom:.1f}%")
+        total_completion = (total_completed / total_input * 100) if total_input > 0 else 0
+        total_prev = sum(stats.get("prev_input", 0) for stats in sto_stats.values())
+        total_mom = ((total_input - total_prev) / total_prev * 100) if total_prev > 0 else (100 if total_input > 0 else 0)
+        lines.append(f"\n• *TOTAL*: Input {total_input} | Comp {total_completed} | FO {total_fallout} | IO/PS {total_completion:.1f}% | Kontrib 100.0% | MoM {total_mom:.1f}%")
+        lines.append(f"\n📅 Last Update Data: {get_last_order_date()}")
+
+        await query.edit_message_text("\n".join(lines), parse_mode="Markdown")
+        return ConversationHandler.END
 
 # ---------- SALES CHOOSE (handles all main sales report options) ----------
 async def sales_choose(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1643,6 +1707,7 @@ def main():
             SUMMARY_MONTH: [CallbackQueryHandler(summary_month_selected, pattern="^summonth_")],
             GRAPARI_STO_YEAR: [CallbackQueryHandler(grapari_sto_year_selected, pattern="^stoyear_")],
             GRAPARI_STO_MONTH: [CallbackQueryHandler(grapari_sto_month_selected, pattern="^stomonth_")],
+            GRAPARI_STO_OPTION: [CallbackQueryHandler(grapari_sto_option_callback, pattern="^(sto_summary|sto_csv)$")],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
         allow_reentry=True,
