@@ -45,6 +45,8 @@ SUMMARY_YEAR = 30
 SUMMARY_MONTH = 31
 TEAM_LEADER_OPTION = 32
 REPORT_OPTION = 40
+GRAPARI_STO_YEAR = 50
+GRAPARI_STO_MONTH = 51
 
 ALL_STATUSES = [
     "PENDING_CUSTOMER_VERIFICATION", "PROVISION_START", "TECH_ASSIGNED",
@@ -125,7 +127,6 @@ def get_last_order_date():
                 tgl = rec.get("Tanggal Input", "")
                 if not tgl:
                     continue
-                # Try to parse with datetime.strptime for robustness
                 tgl_clean = clean_text(tgl)
                 for fmt in ["%d/%m/%Y %H:%M", "%d/%m/%Y", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d"]:
                     try:
@@ -190,7 +191,7 @@ def can_view_reports(telegram_id):
 
 def can_view_sales_report(telegram_id):
     _, subrole = get_user_role(telegram_id)
-    return subrole in ["Supervisor", "Team Leader", "IT", "Manager"]
+    return subrole in ["Supervisor", "Team Leader", "IT", "Manager", "Team Leader Grapari", "CS Grapari"]
 
 def can_view_summary(telegram_id):
     _, subrole = get_user_role(telegram_id)
@@ -398,7 +399,7 @@ async def send_guide(update: Update, user_id):
             "📦 *Cek Banyak Order*:\n"
             "Klik tombol 'Cek Banyak Order', lalu masukkan 2 hingga 10 Order ID (dipisah spasi).\n\n"
             "📊 *Laporan Performa Sales*:\n"
-            "Klik tombol 'Cek Laporan Sales' dan ikuti menu interaktif (tersedia untuk Supervisor, Team Leader, IT, Manager).\n\n"
+            "Klik tombol 'Cek Laporan Sales' dan ikuti menu interaktif (tersedia untuk Supervisor, Team Leader, IT, Manager, Team Leader Grapari, CS Grapari).\n\n"
             "📊 *Laporan Pengguna Bot*:\n"
             "Klik tombol 'Laporan Pengguna Bot' lalu pilih Harian, Mingguan, atau Bulanan.\n\n"
             "📎 Untuk laporan penggunaan bot, alternatifnya bisa menggunakan perintah /report.\n\n"
@@ -413,7 +414,7 @@ async def send_guide(update: Update, user_id):
             "📦 *Cek Banyak Order*:\n"
             "Klik tombol 'Cek Banyak Order', lalu masukkan 2 hingga 10 Order ID (dipisah spasi).\n\n"
             "📊 *Laporan*:\n"
-            "Laporan hanya tersedia untuk Supervisor, Manager, HSA, IT, dan Team Leader.\n\n"
+            "Laporan hanya tersedia untuk Supervisor, Manager, HSA, IT, Team Leader, Team Leader Grapari, dan CS Grapari.\n\n"
             "Untuk daftar perintah lengkap, ketik /help."
         )
     await reply(text, parse_mode="Markdown")
@@ -450,7 +451,8 @@ async def reg_email(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("Agency", callback_data="group_Agency")],
         [InlineKeyboardButton("Branch", callback_data="group_Branch")],
-        [InlineKeyboardButton("Technician", callback_data="group_Technician")]
+        [InlineKeyboardButton("Technician", callback_data="group_Technician")],
+        [InlineKeyboardButton("Grapari", callback_data="group_Grapari")]
     ])
     await update.message.reply_text("Pilih grup peran Anda:", reply_markup=keyboard)
     return REG_ROLE_GROUP
@@ -472,7 +474,14 @@ async def reg_role_group(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("Manager", callback_data="sub_MGR")],
             [InlineKeyboardButton("IT", callback_data="sub_IT")]
         ])
-    else:
+    elif group == "Grapari":
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("Team Leader Grapari", callback_data="sub_TLG")],
+            [InlineKeyboardButton("CS Grapari", callback_data="sub_CSG")]
+        ])
+        await query.edit_message_text("Pilih sub-peran Anda:", reply_markup=keyboard)
+        return REG_SUBROLE
+    else:  # Technician
         keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton("Technician", callback_data="sub_TECH")],
             [InlineKeyboardButton("HSA", callback_data="sub_HSA")]
@@ -487,7 +496,9 @@ async def reg_subrole(update: Update, context: ContextTypes.DEFAULT_TYPE):
     sub_map = {
         "TL": "Team Leader", "SF": "Salesforce",
         "IN": "Inputters", "SPV": "Supervisor", "MGR": "Manager", "IT": "IT",
-        "TECH": "Technician", "HSA": "HSA"
+        "TECH": "Technician", "HSA": "HSA",
+        "TLG": "Team Leader Grapari",
+        "CSG": "CS Grapari"
     }
     subrole = sub_map.get(sub, sub)
     context.user_data["reg_subrole"] = subrole
@@ -721,16 +732,139 @@ async def sales_report_main(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.reply_text("Anda tidak memiliki akses ke laporan sales.")
         return ConversationHandler.END
 
+    _, subrole = get_user_role(user_id)
     keyboard = [
         [InlineKeyboardButton("📊 Laporan Detail (per WOK)", callback_data="sales_detail")],
     ]
     if can_view_summary(user_id):
         keyboard.append([InlineKeyboardButton("📈 Ringkasan (per WOK & Channel)", callback_data="sales_summary")])
+    if subrole in ["Team Leader Grapari", "CS Grapari"]:
+        keyboard.append([InlineKeyboardButton("📊 Grapari Performance (per STO)", callback_data="grapari_sto")])
     keyboard.append([InlineKeyboardButton("🔙 Kembali ke Menu Utama", callback_data="sales_back")])
 
     await query.message.reply_text("Pilih jenis laporan:", reply_markup=InlineKeyboardMarkup(keyboard))
     return SALES_WOK
 
+# ---------- GRAPARI PERFORMANCE (per STO) ----------
+async def grapari_sto_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    _, subrole = get_user_role(user_id)
+    if subrole not in ["Team Leader Grapari", "CS Grapari"]:
+        await query.message.reply_text("Anda tidak memiliki akses ke laporan ini.")
+        return ConversationHandler.END
+    current_year = datetime.now().year
+    year_buttons = []
+    for y in range(current_year - 2, current_year + 1):
+        year_buttons.append([InlineKeyboardButton(str(y), callback_data=f"stoyear_{y}")])
+    year_keyboard = InlineKeyboardMarkup(year_buttons)
+    await query.message.reply_text("Pilih tahun:", reply_markup=year_keyboard)
+    return GRAPARI_STO_YEAR
+
+async def grapari_sto_year_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    year = int(query.data.split("_")[1])
+    context.user_data["grapari_sto_year"] = year
+    month_keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("Januari", callback_data="stomonth_1"),
+         InlineKeyboardButton("Februari", callback_data="stomonth_2"),
+         InlineKeyboardButton("Maret", callback_data="stomonth_3")],
+        [InlineKeyboardButton("April", callback_data="stomonth_4"),
+         InlineKeyboardButton("Mei", callback_data="stomonth_5"),
+         InlineKeyboardButton("Juni", callback_data="stomonth_6")],
+        [InlineKeyboardButton("Juli", callback_data="stomonth_7"),
+         InlineKeyboardButton("Agustus", callback_data="stomonth_8"),
+         InlineKeyboardButton("September", callback_data="stomonth_9")],
+        [InlineKeyboardButton("Oktober", callback_data="stomonth_10"),
+         InlineKeyboardButton("November", callback_data="stomonth_11"),
+         InlineKeyboardButton("Desember", callback_data="stomonth_12")]
+    ])
+    await query.edit_message_text("Pilih bulan:", reply_markup=month_keyboard)
+    return GRAPARI_STO_MONTH
+
+async def grapari_sto_month_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    month_num = int(query.data.split("_")[1])
+    month_names = ["Januari", "Februari", "Maret", "April", "Mei", "Juni",
+                   "Juli", "Agustus", "September", "Oktober", "November", "Desember"]
+    month_name = month_names[month_num - 1]
+    year = context.user_data.get("grapari_sto_year", datetime.now().year)
+
+    records = get_raw_records()
+    prev_month = month_num - 1 if month_num > 1 else 12
+    prev_year = year if month_num > 1 else year - 1
+
+    def extract_date(date_str):
+        if not date_str:
+            return None, None
+        date_str = clean_text(date_str)
+        for fmt in ["%d/%m/%Y %H:%M", "%d/%m/%Y", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d"]:
+            try:
+                dt = datetime.strptime(date_str, fmt)
+                return dt.year, dt.month
+            except:
+                continue
+        return None, None
+
+    sto_stats = {}
+    total_input = 0
+    total_completed = 0
+    total_fallout = 0
+
+    for rec in records:
+        channel = rec.get("Channel Name", "").strip().upper()
+        if channel != "GRAPARI":
+            continue
+        sto = rec.get("STO", "").strip()
+        if not sto:
+            continue
+        tgl = rec.get("Tanggal Input", "")
+        y, m = extract_date(tgl)
+        if y is None or m is None:
+            continue
+        status = (rec.get("Status Order", "") or "").strip().upper()
+        if y == year and m == month_num:
+            total_input += 1
+            if status == "COMPLETED":
+                total_completed += 1
+            elif status == "FALLOUT":
+                total_fallout += 1
+            if sto not in sto_stats:
+                sto_stats[sto] = {"input": 0, "completed": 0, "fallout": 0, "prev_input": 0}
+            sto_stats[sto]["input"] += 1
+            if status == "COMPLETED":
+                sto_stats[sto]["completed"] += 1
+            elif status == "FALLOUT":
+                sto_stats[sto]["fallout"] += 1
+        if y == prev_year and m == prev_month:
+            if sto not in sto_stats:
+                sto_stats[sto] = {"input": 0, "completed": 0, "fallout": 0, "prev_input": 0}
+            sto_stats[sto]["prev_input"] += 1
+
+    sorted_stos = sorted(sto_stats.items(), key=lambda x: x[1]["input"], reverse=True)
+    lines = [f"📊 *RINGKASAN PER STO (GRAPARI)*", f"📅 {month_name.upper()} {year}", ""]
+    for sto, stats in sorted_stos:
+        inp = stats["input"]
+        comp = stats["completed"]
+        flt = stats["fallout"]
+        prev = stats["prev_input"]
+        completion = (comp / inp * 100) if inp > 0 else 0
+        contrib = (inp / total_input * 100) if total_input > 0 else 0
+        mom = ((inp - prev) / prev * 100) if prev > 0 else (100 if inp > 0 else 0)
+        lines.append(f"• *{sto}*: Input {inp} | Comp {comp} | FO {flt} | IO/PS {completion:.1f}% | Kontrib {contrib:.1f}% | MoM {mom:.1f}%")
+    total_completion = (total_completed / total_input * 100) if total_input > 0 else 0
+    total_prev = sum(stats.get("prev_input", 0) for stats in sto_stats.values())
+    total_mom = ((total_input - total_prev) / total_prev * 100) if total_prev > 0 else (100 if total_input > 0 else 0)
+    lines.append(f"\n• *TOTAL*: Input {total_input} | Comp {total_completed} | FO {total_fallout} | IO/PS {total_completion:.1f}% | Kontrib 100.0% | MoM {total_mom:.1f}%")
+    lines.append(f"\n📅 Last Update Data: {get_last_order_date()}")
+
+    await query.message.reply_text("\n".join(lines), parse_mode="Markdown")
+    return ConversationHandler.END
+
+# ---------- SALES CHOOSE (handles all main sales report options) ----------
 async def sales_choose(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -757,6 +891,10 @@ async def sales_choose(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "sales_back":
         await query.message.delete()
         await show_main_menu(update, update.effective_user.id)
+        return ConversationHandler.END
+    elif data == "grapari_sto":
+        await query.message.delete()
+        await grapari_sto_start(update, context)
         return ConversationHandler.END
     return ConversationHandler.END
 
@@ -812,6 +950,7 @@ async def sales_year_selected(update: Update, context: ContextTypes.DEFAULT_TYPE
     await query.edit_message_text("Pilih bulan:", reply_markup=month_keyboard)
     return SALES_MONTH
 
+# ---------- SALES MONTH SELECTED (for Manager/IT Detail and Team Leader) ----------
 async def sales_month_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -890,7 +1029,7 @@ async def sales_month_selected(update: Update, context: ContextTypes.DEFAULT_TYP
         context.user_data["tl_year"] = year
         context.user_data["tl_month_num"] = month_num
         context.user_data["tl_month_name"] = month_name
-
+        context.user_data["tl_channel"] = "AGENCY"
         option_keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton("📥 Download CSV", callback_data="tl_csv")],
             [InlineKeyboardButton("📋 Tampilkan Data", callback_data="tl_show")],
@@ -902,8 +1041,26 @@ async def sales_month_selected(update: Update, context: ContextTypes.DEFAULT_TYP
         )
         return TEAM_LEADER_OPTION
 
+    elif subrole in ["Team Leader Grapari", "CS Grapari"]:
+        context.user_data["tl_wok"] = wok
+        context.user_data["tl_year"] = year
+        context.user_data["tl_month_num"] = month_num
+        context.user_data["tl_month_name"] = month_name
+        context.user_data["tl_channel"] = "GRAPARI"
+        option_keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("📥 Download CSV", callback_data="tl_csv")],
+            [InlineKeyboardButton("📋 Tampilkan Data", callback_data="tl_show")],
+            [InlineKeyboardButton("📦 Popular Paket (Grapari)", callback_data="tl_paket")]
+        ])
+        await query.edit_message_text(
+            f"📍 WOK: {wok} | Channel: GRAPARI\n📅 {month_name.upper()} {year}\n\nPilih format laporan:",
+            reply_markup=option_keyboard
+        )
+        return TEAM_LEADER_OPTION
+
     return ConversationHandler.END
 
+# ---------- TEAM LEADER OPTION CALLBACK (CSV, SHOW, PAKET) ----------
 async def team_leader_option_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -913,6 +1070,7 @@ async def team_leader_option_callback(update: Update, context: ContextTypes.DEFA
     year = context.user_data.get("tl_year")
     month_num = context.user_data.get("tl_month_num")
     month_name = context.user_data.get("tl_month_name")
+    target_channel = context.user_data.get("tl_channel", "AGENCY")
 
     if not wok:
         await query.edit_message_text("Terjadi kesalahan. Silakan coba lagi.")
@@ -933,7 +1091,7 @@ async def team_leader_option_callback(update: Update, context: ContextTypes.DEFA
             else:
                 date_part = rec_tanggal_input.split()[0]
                 d, m, y = map(int, date_part.split('/'))
-            if m == month_num and y == year and rec_wok == wok and rec_channel == "AGENCY":
+            if m == month_num and y == year and rec_wok == wok and rec_channel == target_channel:
                 filtered.append(rec)
         except:
             continue
@@ -961,8 +1119,8 @@ async def team_leader_option_callback(update: Update, context: ContextTypes.DEFA
                 rec.get("Paket", "")
             ])
         output.seek(0)
-        filename = f"orders_{wok}_{year}_{month_num}.csv"
-        await query.message.reply_document(document=output, filename=filename, caption=f"📊 Data Order {wok} - {month_name} {year}")
+        filename = f"orders_{wok}_{year}_{month_num}_{target_channel}.csv"
+        await query.message.reply_document(document=output, filename=filename, caption=f"📊 Data Order {wok} - {month_name} {year} ({target_channel})")
         await query.delete_message()
         return ConversationHandler.END
 
@@ -995,7 +1153,7 @@ async def team_leader_option_callback(update: Update, context: ContextTypes.DEFA
             sales_dict[sf]["orders"].append((order_id, status))
 
         sorted_sf = sorted(sales_dict.items(), key=lambda x: x[1]["total"], reverse=True)
-        header = f"📢 Channel: AGENCY\n📅 Tahun: {year}\n📅 Bulan: {month_name.upper()}\n📍 WOK: {wok}"
+        header = f"📢 Channel: {target_channel}\n📅 Tahun: {year}\n📅 Bulan: {month_name.upper()}\n📍 WOK: {wok}"
         await processing_msg.edit_text(header)
 
         for sf, data in sorted_sf:
@@ -1037,20 +1195,18 @@ async def team_leader_option_callback(update: Update, context: ContextTypes.DEFA
         return ConversationHandler.END
 
     elif action == "tl_paket":
-        # Popular Paket report for Agency only – ALL packages (no limit)
         await query.delete_message()
-        processing_msg = await query.message.reply_text("⏳ Menghitung semua paket COMPLETED (Agency only)...")
+        processing_msg = await query.message.reply_text(f"⏳ Menghitung semua paket COMPLETED ({target_channel} only)...")
 
         paket_records = []
         for rec in records:
             rec_wok = rec.get("WOK", "")
             rec_channel = rec.get("Channel Name", "").strip().upper()
             rec_tanggal = rec.get("Tanggal Input", "")
-            if rec_wok != wok or rec_channel != "AGENCY":
+            if rec_wok != wok or rec_channel != target_channel:
                 continue
             if not rec_tanggal:
                 continue
-            # Robust date parsing
             try:
                 dt = None
                 for fmt in ["%d/%m/%Y %H:%M", "%d/%m/%Y", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d"]:
@@ -1065,7 +1221,7 @@ async def team_leader_option_callback(update: Update, context: ContextTypes.DEFA
                 continue
 
         if not paket_records:
-            await processing_msg.edit_text(f"Tidak ada data AGENCY untuk WOK {wok} pada {month_name} {year}.")
+            await processing_msg.edit_text(f"Tidak ada data {target_channel} untuk WOK {wok} pada {month_name} {year}.")
             return ConversationHandler.END
 
         total_completed = 0
@@ -1081,12 +1237,11 @@ async def team_leader_option_callback(update: Update, context: ContextTypes.DEFA
             paket_counts[paket] = paket_counts.get(paket, 0) + 1
 
         if total_completed == 0:
-            await processing_msg.edit_text(f"Tidak ada order COMPLETED untuk AGENCY di {wok} pada {month_name} {year}.")
+            await processing_msg.edit_text(f"Tidak ada order COMPLETED untuk {target_channel} di {wok} pada {month_name} {year}.")
             return ConversationHandler.END
 
-        # Show ALL packages (no limit)
         sorted_paket = sorted(paket_counts.items(), key=lambda x: x[1], reverse=True)
-        lines = [f"📦 *SEMUA PAKET COMPLETED – AGENCY ONLY*",
+        lines = [f"📦 *SEMUA PAKET COMPLETED – {target_channel} ONLY*",
                  f"📍 WOK: {wok}",
                  f"📅 {month_name.upper()} {year}",
                  ""]
@@ -1101,7 +1256,7 @@ async def team_leader_option_callback(update: Update, context: ContextTypes.DEFA
         await query.edit_message_text("Perintah tidak dikenal.")
         return ConversationHandler.END
 
-# ---------- SUMMARY REPORT (Ringkasan) ----------
+# ---------- SUMMARY REPORT (RINGKASAN) ----------
 async def summary_year_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -1196,11 +1351,11 @@ async def summary_month_selected(update: Update, context: ContextTypes.DEFAULT_T
         completion = (comp / inp * 100) if inp > 0 else 0
         contrib = (inp / total_input * 100) if total_input > 0 else 0
         mom = ((inp - prev) / prev * 100) if prev > 0 else (100 if inp > 0 else 0)
-        lines1.append(f"• *{wok}*: Input {inp} | Cmpl {comp} | Flt {flt} | IO/PS {completion:.1f}% | Kontrib {contrib:.1f}% | MoM {mom:.1f}%")
+        lines1.append(f"• *{wok}*: Input {inp} | Comp {comp} | FO {flt} | IO/PS {completion:.1f}% | Kontrib {contrib:.1f}% | MoM {mom:.1f}%")
     total_completion = (total_completed / total_input * 100) if total_input > 0 else 0
     total_prev = sum(stats.get("prev_input", 0) for stats in wok_stats.values())
     total_mom = ((total_input - total_prev) / total_prev * 100) if total_prev > 0 else (100 if total_input > 0 else 0)
-    lines1.append(f"\n• *TOTAL*: Input {total_input} | Cmpl {total_completed} | Flt {total_fallout} | IO/PS {total_completion:.1f}% | Kontrib 100.0% | MoM {total_mom:.1f}%")
+    lines1.append(f"\n• *TOTAL*: Input {total_input} | Comp {total_completed} | FO {total_fallout} | IO/PS {total_completion:.1f}% | Kontrib 100.0% | MoM {total_mom:.1f}%")
     lines1.append(f"\n\n📅 Last Update Data: {get_last_order_date()}")
     await query.message.reply_text("\n".join(lines1), parse_mode="Markdown")
 
@@ -1248,11 +1403,11 @@ async def summary_month_selected(update: Update, context: ContextTypes.DEFAULT_T
         completion = (comp / inp * 100) if inp > 0 else 0
         contrib = (inp / total_chan_input * 100) if total_chan_input > 0 else 0
         mom = ((inp - prev) / prev * 100) if prev > 0 else (100 if inp > 0 else 0)
-        lines2.append(f"• *{ch}*: Input {inp} | Cmpl {comp} | Flt {flt} | IO/PS {completion:.1f}% | Kontrib {contrib:.1f}% | MoM {mom:.1f}%")
+        lines2.append(f"• *{ch}*: Input {inp} | Comp {comp} | FO {flt} | IO/PS {completion:.1f}% | Kontrib {contrib:.1f}% | MoM {mom:.1f}%")
     total_chan_completion = (total_chan_completed / total_chan_input * 100) if total_chan_input > 0 else 0
     total_chan_prev = sum(stats.get("prev_input", 0) for stats in chan_stats.values())
     total_chan_mom = ((total_chan_input - total_chan_prev) / total_chan_prev * 100) if total_chan_prev > 0 else (100 if total_chan_input > 0 else 0)
-    lines2.append(f"\n• *TOTAL*: Input {total_chan_input} | Cmpl {total_chan_completed} | Flt {total_chan_fallout} | IO/PS {total_chan_completion:.1f}% | Kontrib 100.0% | MoM {total_chan_mom:.1f}%")
+    lines2.append(f"\n• *TOTAL*: Input {total_chan_input} | Comp {total_chan_completed} | FO {total_chan_fallout} | IO/PS {total_chan_completion:.1f}% | Kontrib 100.0% | MoM {total_chan_mom:.1f}%")
     lines2.append(f"\n\n📅 Last Update Data: {get_last_order_date()}")
     await query.message.reply_text("\n".join(lines2), parse_mode="Markdown")
 
@@ -1298,11 +1453,11 @@ async def summary_month_selected(update: Update, context: ContextTypes.DEFAULT_T
             completion = (comp / inp * 100) if inp > 0 else 0
             contrib = (inp / total_wok_input * 100) if total_wok_input > 0 else 0
             mom = ((inp - prev) / prev * 100) if prev > 0 else (100 if inp > 0 else 0)
-            lines_wok.append(f"• *{ch}*: Input {inp} | Cmpl {comp} | Flt {flt} | IO/PS {completion:.1f}% | Kontrib {contrib:.1f}% | MoM {mom:.1f}%")
+            lines_wok.append(f"• *{ch}*: Input {inp} | Comp {comp} | FO {flt} | IO/PS {completion:.1f}% | Kontrib {contrib:.1f}% | MoM {mom:.1f}%")
         total_wok_completion = (total_wok_completed / total_wok_input * 100) if total_wok_input > 0 else 0
         total_wok_prev = sum(wok_chan_stats[ch]["prev_input"] for ch in channels)
         total_wok_mom = ((total_wok_input - total_wok_prev) / total_wok_prev * 100) if total_wok_prev > 0 else (100 if total_wok_input > 0 else 0)
-        lines_wok.append(f"\n• *TOTAL*: Input {total_wok_input} | Cmpl {total_wok_completed} | Flt {total_wok_fallout} | IO/PS {total_wok_completion:.1f}% | Kontrib 100.0% | MoM {total_wok_mom:.1f}%")
+        lines_wok.append(f"\n• *TOTAL*: Input {total_wok_input} | Comp {total_wok_completed} | FO {total_wok_fallout} | IO/PS {total_wok_completion:.1f}% | Kontrib 100.0% | MoM {total_wok_mom:.1f}%")
         lines_wok.append(f"\n\n📅 Last Update Data: {get_last_order_date()}")
         await query.message.reply_text("\n".join(lines_wok), parse_mode="Markdown")
 
@@ -1354,7 +1509,7 @@ async def summary_month_selected(update: Update, context: ContextTypes.DEFAULT_T
             result.append((paket, count, pct))
         return result
 
-    # Global
+    # Global (all WOKs, all channels)
     global_completed_records = []
     for rec in records:
         tgl = rec.get("Tanggal Input", "")
@@ -1473,13 +1628,15 @@ def main():
     sales_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(sales_report_main, pattern="^menu_sales_report$")],
         states={
-            SALES_WOK: [CallbackQueryHandler(sales_choose, pattern="^(sales_detail|sales_summary|sales_back)$")],
+            SALES_WOK: [CallbackQueryHandler(sales_choose, pattern="^(sales_detail|sales_summary|sales_back|grapari_sto)$")],
             DETAIL_WOK: [CallbackQueryHandler(detail_wok_selected, pattern="^wok_")],
             SALES_YEAR: [CallbackQueryHandler(sales_year_selected, pattern="^year_")],
             SALES_MONTH: [CallbackQueryHandler(sales_month_selected, pattern="^month_")],
             TEAM_LEADER_OPTION: [CallbackQueryHandler(team_leader_option_callback, pattern="^(tl_csv|tl_show|tl_paket)$")],
             SUMMARY_YEAR: [CallbackQueryHandler(summary_year_selected, pattern="^sumyear_")],
             SUMMARY_MONTH: [CallbackQueryHandler(summary_month_selected, pattern="^summonth_")],
+            GRAPARI_STO_YEAR: [CallbackQueryHandler(grapari_sto_year_selected, pattern="^stoyear_")],
+            GRAPARI_STO_MONTH: [CallbackQueryHandler(grapari_sto_month_selected, pattern="^stomonth_")],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
         allow_reentry=True,
