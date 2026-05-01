@@ -243,24 +243,29 @@ def get_main_menu_keyboard(telegram_id):
     buttons.append([InlineKeyboardButton("📖 Panduan Pengguna", callback_data="menu_guide")])
     return InlineKeyboardMarkup(buttons)
 
-async def show_main_menu(update: Update, user_id):
+async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Safely send main menu using context.bot.send_message."""
+    user_id = update.effective_user.id
+    bot = context.bot
+
     if is_user_approved(user_id):
         text = "Selamat datang! Silakan pilih menu:"
         keyboard = get_main_menu_keyboard(user_id)
-        await update.message.reply_text(text, reply_markup=keyboard)
+        await bot.send_message(chat_id=user_id, text=text, reply_markup=keyboard)
     else:
         text = "Anda belum terdaftar. Silakan daftar terlebih dahulu."
         keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton("📝 Daftar", callback_data="menu_register")],
             [InlineKeyboardButton("📖 Panduan Pengguna", callback_data="menu_guide")]
         ])
-        await update.message.reply_text(text, reply_markup=keyboard)
+        await bot.send_message(chat_id=user_id, text=text, reply_markup=keyboard)
 
 async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     data = query.data
     user_id = update.effective_user.id
+
     if data == "menu_register":
         await query.message.delete()
         await register_start(update, context)
@@ -278,8 +283,8 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await usage_report_menu(update, context)
     elif data == "menu_guide":
         await query.message.delete()
-        await send_guide(update, user_id)
-        await show_main_menu(update, user_id)
+        await send_guide(update, user_id, context)
+        await show_main_menu(update, context)
 
 # ---------- USAGE REPORT MENU ----------
 async def usage_report_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -363,7 +368,7 @@ async def report_option_callback(update: Update, context: ContextTypes.DEFAULT_T
     data = query.data
     if data == "report_back":
         await query.message.delete()
-        await show_main_menu(update, update.effective_user.id)
+        await show_main_menu(update, context)
         return ConversationHandler.END
     period = data.split("_")[1]
     user_id = update.effective_user.id
@@ -372,7 +377,7 @@ async def report_option_callback(update: Update, context: ContextTypes.DEFAULT_T
     return ConversationHandler.END
 
 # ---------- COMBINED GUIDE ----------
-async def send_guide(update: Update, user_id):
+async def send_guide(update: Update, user_id, context: ContextTypes.DEFAULT_TYPE = None):
     if update.callback_query:
         msg = update.callback_query.message
         reply = msg.reply_text
@@ -754,10 +759,12 @@ async def grapari_sto_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if subrole not in ["Team Leader Grapari", "CS Grapari"]:
         await query.message.reply_text("Anda tidak memiliki akses ke laporan ini.")
         return ConversationHandler.END
-    current_year = datetime.now().year
-    year_buttons = []
-    for y in range(current_year - 2, current_year + 1):
-        year_buttons.append([InlineKeyboardButton(str(y), callback_data=f"stoyear_{y}")])
+
+    # Only show 2025 and 2026 as requested
+    year_buttons = [
+        [InlineKeyboardButton("2025", callback_data="stoyear_2025")],
+        [InlineKeyboardButton("2026", callback_data="stoyear_2026")]
+    ]
     year_keyboard = InlineKeyboardMarkup(year_buttons)
     await query.message.reply_text("Pilih tahun:", reply_markup=year_keyboard)
     return GRAPARI_STO_YEAR
@@ -890,7 +897,7 @@ async def sales_choose(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return SUMMARY_YEAR
     elif data == "sales_back":
         await query.message.delete()
-        await show_main_menu(update, update.effective_user.id)
+        await show_main_menu(update, context)
         return ConversationHandler.END
     elif data == "grapari_sto":
         await query.message.delete()
@@ -950,7 +957,6 @@ async def sales_year_selected(update: Update, context: ContextTypes.DEFAULT_TYPE
     await query.edit_message_text("Pilih bulan:", reply_markup=month_keyboard)
     return SALES_MONTH
 
-# ---------- SALES MONTH SELECTED (for Manager/IT Detail and Team Leader) ----------
 async def sales_month_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -1572,20 +1578,20 @@ async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ---------- GENERAL COMMANDS ----------
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Perintah dibatalkan. Kembali ke menu utama.")
-    await show_main_menu(update, update.effective_user.id)
+    await show_main_menu(update, context)
     return ConversationHandler.END
 
 async def ping(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("pong")
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await send_guide(update, update.effective_user.id)
+    await send_guide(update, update.effective_user.id, context)
 
 async def guide_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await send_guide(update, update.effective_user.id)
+    await send_guide(update, update.effective_user.id, context)
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await show_main_menu(update, update.effective_user.id)
+    await show_main_menu(update, context)
 
 # ---------- MAIN ----------
 def main():
