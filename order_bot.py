@@ -749,7 +749,7 @@ async def sales_report_main(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.message.reply_text("Pilih jenis laporan:", reply_markup=InlineKeyboardMarkup(keyboard))
     return SALES_WOK
 
-# ---------- GRAPARI PERFORMANCE (per STO) - FIXED VERSION ----------
+# ---------- GRAPARI PERFORMANCE (per STO) - FIXED ----------
 async def grapari_sto_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -759,13 +759,15 @@ async def grapari_sto_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.reply_text("Anda tidak memiliki akses ke laporan ini.")
         return ConversationHandler.END
 
+    # Delete the current "Pilih jenis laporan" message
+    await query.message.delete()
+    # Send year selection as a new message
     year_buttons = [
         [InlineKeyboardButton("2025", callback_data="stoyear_2025")],
         [InlineKeyboardButton("2026", callback_data="stoyear_2026")]
     ]
     year_keyboard = InlineKeyboardMarkup(year_buttons)
-    await query.message.reply_text("Pilih tahun:", reply_markup=year_keyboard)
-    await query.message.delete()  # delete the "Pilih jenis laporan" message
+    await context.bot.send_message(chat_id=user_id, text="Pilih tahun:", reply_markup=year_keyboard)
     return GRAPARI_STO_YEAR
 
 async def grapari_sto_year_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -774,6 +776,9 @@ async def grapari_sto_year_selected(update: Update, context: ContextTypes.DEFAUL
     year = int(query.data.split("_")[1])
     context.user_data["grapari_sto_year"] = year
 
+    # Delete the year selection message
+    await query.message.delete()
+    # Send month selection
     month_keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("Januari", callback_data="stomonth_1"),
          InlineKeyboardButton("Februari", callback_data="stomonth_2"),
@@ -788,7 +793,7 @@ async def grapari_sto_year_selected(update: Update, context: ContextTypes.DEFAUL
          InlineKeyboardButton("November", callback_data="stomonth_11"),
          InlineKeyboardButton("Desember", callback_data="stomonth_12")]
     ])
-    await query.edit_message_text("Pilih bulan:", reply_markup=month_keyboard)
+    await context.bot.send_message(chat_id=update.effective_user.id, text="Pilih bulan:", reply_markup=month_keyboard)
     return GRAPARI_STO_MONTH
 
 async def grapari_sto_month_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -802,12 +807,16 @@ async def grapari_sto_month_selected(update: Update, context: ContextTypes.DEFAU
     context.user_data["grapari_sto_month_num"] = month_num
     context.user_data["grapari_sto_month_name"] = month_name
 
+    # Delete the month selection message
+    await query.message.delete()
+    # Send options
     option_keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("📊 Lihat Ringkasan", callback_data="sto_summary")],
         [InlineKeyboardButton("📥 Download CSV", callback_data="sto_csv")]
     ])
-    await query.edit_message_text(
-        f"📅 {month_name.upper()} {year}\n\nPilih format laporan:",
+    await context.bot.send_message(
+        chat_id=update.effective_user.id,
+        text=f"📅 {month_name.upper()} {year}\n\nPilih format laporan:",
         reply_markup=option_keyboard
     )
     return GRAPARI_STO_OPTION
@@ -963,8 +972,7 @@ async def sales_choose(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await show_main_menu(update, context)
         return ConversationHandler.END
     elif data == "grapari_sto":
-        await grapari_sto_start(update, context)
-        return ConversationHandler.END
+        return await grapari_sto_start(update, context)
     return ConversationHandler.END
 
 # ---------- DETAILED WOK HANDLER ----------
