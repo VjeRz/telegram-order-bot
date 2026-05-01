@@ -47,7 +47,7 @@ TEAM_LEADER_OPTION = 32
 REPORT_OPTION = 40
 GRAPARI_STO_YEAR = 50
 GRAPARI_STO_MONTH = 51
-GRAPARI_STO_OPTION = 52   # after month: choose summary or CSV
+GRAPARI_STO_OPTION = 52
 
 ALL_STATUSES = [
     "PENDING_CUSTOMER_VERIFICATION", "PROVISION_START", "TECH_ASSIGNED",
@@ -245,7 +245,6 @@ def get_main_menu_keyboard(telegram_id):
     return InlineKeyboardMarkup(buttons)
 
 async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Safely send main menu using context.bot.send_message."""
     user_id = update.effective_user.id
     bot = context.bot
 
@@ -265,7 +264,6 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     data = query.data
-    user_id = update.effective_user.id
 
     if data == "menu_register":
         await query.message.delete()
@@ -284,7 +282,7 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await usage_report_menu(update, context)
     elif data == "menu_guide":
         await query.message.delete()
-        await send_guide(update, user_id, context)
+        await send_guide(update, update.effective_user.id, context)
         await show_main_menu(update, context)
 
 # ---------- USAGE REPORT MENU ----------
@@ -774,6 +772,7 @@ async def grapari_sto_year_selected(update: Update, context: ContextTypes.DEFAUL
     await query.answer()
     year = int(query.data.split("_")[1])
     context.user_data["grapari_sto_year"] = year
+
     month_keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("Januari", callback_data="stomonth_1"),
          InlineKeyboardButton("Februari", callback_data="stomonth_2"),
@@ -841,7 +840,6 @@ async def grapari_sto_option_callback(update: Update, context: ContextTypes.DEFA
         return None, None
 
     if action == "sto_csv":
-        # Collect all orders (all statuses) for GRAPARI channel, selected year/month
         csv_records = []
         for rec in records:
             channel = rec.get("Channel Name", "").strip().upper()
@@ -1094,6 +1092,7 @@ async def sales_month_selected(update: Update, context: ContextTypes.DEFAULT_TYP
         await processing_msg.edit_text("\n".join(lines))
         return ConversationHandler.END
 
+    # For Team Leader (Agency) and Grapari roles: same three options (CSV, list, paket)
     if subrole == "Team Leader":
         context.user_data["tl_wok"] = wok
         context.user_data["tl_year"] = year
