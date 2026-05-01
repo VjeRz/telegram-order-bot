@@ -749,7 +749,7 @@ async def sales_report_main(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.message.reply_text("Pilih jenis laporan:", reply_markup=InlineKeyboardMarkup(keyboard))
     return SALES_WOK
 
-# ---------- GRAPARI PERFORMANCE (per STO) - FIXED YEAR->MONTH----------
+# ---------- GRAPARI PERFORMANCE (per STO) - FIXED VERSION ----------
 async def grapari_sto_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -764,7 +764,8 @@ async def grapari_sto_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("2026", callback_data="stoyear_2026")]
     ]
     year_keyboard = InlineKeyboardMarkup(year_buttons)
-    await query.edit_message_text("Pilih tahun:", reply_markup=year_keyboard)
+    await query.message.reply_text("Pilih tahun:", reply_markup=year_keyboard)
+    await query.message.delete()  # delete the "Pilih jenis laporan" message
     return GRAPARI_STO_YEAR
 
 async def grapari_sto_year_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -962,7 +963,6 @@ async def sales_choose(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await show_main_menu(update, context)
         return ConversationHandler.END
     elif data == "grapari_sto":
-        await query.message.delete()
         await grapari_sto_start(update, context)
         return ConversationHandler.END
     return ConversationHandler.END
@@ -1092,7 +1092,6 @@ async def sales_month_selected(update: Update, context: ContextTypes.DEFAULT_TYP
         await processing_msg.edit_text("\n".join(lines))
         return ConversationHandler.END
 
-    # For Team Leader (Agency) and Grapari roles: same three options (CSV, list, paket)
     if subrole == "Team Leader":
         context.user_data["tl_wok"] = wok
         context.user_data["tl_year"] = year
