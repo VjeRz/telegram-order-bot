@@ -1,163 +1,90 @@
 ================================================================================
-CEK ORDER SF BRANCH MANADO – TELEGRAM BOT
-USER GUIDE
+                                USER GUIDE
 ================================================================================
 
-This bot helps you check order details, track salesperson performance, and monitor bot usage.
+HOW TO START
+------------
+1. Open Telegram and search for the bot.
+2. Type /start or click “Start”.
+3. If you are not registered, the bot will ask you to register.
 
-CONTENTS
---------
-1. How to register
-2. Commands overview
-3. Order lookup (/start)
-4. Sales performance report (/salesreport)
-5. Usage report (/report) – for Manager, Supervisor, HSA, IT
-6. Help and guide (/help, /guide)
-7. Role access summary
-8. Troubleshooting
-
-================================================================================
-1. HOW TO REGISTER
-================================================================================
-All first‑time users must register.
-
-Step by step:
-1. Send /register to the bot.
+REGISTRATION
+------------
+1. Click the “Daftar” (Register) button.
 2. Enter your full name.
 3. Enter your email address.
-4. Select your role group (Agency, Branch, or Technician).
-5. Select your sub‑role:
-   - Agency: Team Leader, Salesforce
-   - Branch: Inputters, Supervisor, Manager, IT
-   - Technician: Technician, HSA
-6. If you are from Agency, also choose your WOK (Working Area) and enter your SF ID.
-7. After registration, your status is "pending". IT will approve you.
-8. You will receive a message when approved. Then you can use /start.
+4. Choose your role group (Agency, Branch, Technician, or Grapari).
+5. Choose your subrole.
+6. If you are from Agency, also select your Working Area (WOK) and enter your Salesforce ID.
+7. Your request is sent to IT for approval. You will receive a message when approved.
 
-Note: Only the IT role can approve registrations. IT users see pending registrations via /pending.
+MAIN MENU BUTTONS (after approval)
+-----------------------------------
+- 🔍 Cek Order         → Check a single Order ID.
+- 📦 Cek Banyak Order  → Check 2‑10 Order IDs at once (separate by spaces, commas, or new lines).
+- 📊 Cek Laporan Sales → Sales reports (only for certain roles).
+- 📊 Laporan Pengguna Bot → Usage report (only for Managers, Supervisors, HSA, IT).
+- 📖 Panduan Pengguna  → Role‑based help text.
 
-================================================================================
-2. COMMANDS OVERVIEW
-================================================================================
-/register      – Register as a new user (all roles).
-/start         – Check an Order ID (approved users only).
-/salesreport   – Interactive sales performance report (Supervisor, Team Leader, IT, Manager).
-/report        – Bot usage report (Manager, Supervisor, HSA, IT).
-/pending       – See pending registrations and approve/reject (IT only).
-/guide         – Detailed guide based on your role.
-/help          – List of commands.
-/ping          – Test if the bot is alive.
+ORDERS (SINGLE & BULK)
+----------------------
+- Single order: enter one Order ID. The bot shows all available fields.
+- Bulk order: enter 2‑10 Order IDs separated by spaces, commas, or new lines. The bot shows each found order and lists any missing IDs.
 
-================================================================================
-3. ORDER LOOKUP (/start)
-================================================================================
-After approval, send /start. The bot will reply:
-"Semangat Pagi, Masukan Order ID
-Contoh: AOs326032509275620607db90"
-Type or paste the Order ID. The bot will reply with:
-- Order ID
-- STO
-- WOK
-- Order Status
-- Channel Name
-- Fallout Reason
-- SalesForce
-- Tanggal Complete
-- Tanggal Input
-- Sub Error Code
-- Technician Notes
+SALES REPORTS – WHAT EACH ROLE CAN SEE
+---------------------------------------
 
-If the Order ID is not found, you will be told to try again.
+A. Manager / Supervisor / IT
+   - Laporan Detail (per WOK):
+       Choose WOK → Year → Month → see a breakdown of order statuses (including percentages) for that WOK.
+   - Ringkasan (per WOK & Channel):
+       Choose Year → Month → bot sends 11 tables:
+         1) Per WOK summary
+         2) Global per‑channel summary
+         3‑6) Per‑WOK channel summaries
+         7) Global popular paket (all completed packages)
+         8‑11) Per‑WOK popular paket
+   - Laporan Pengguna Bot:
+       Choose Daily, Weekly, or Monthly to see who used the bot and how often. Monthly reports are sent as a CSV file.
 
-================================================================================
-4. SALES PERFORMANCE REPORT (/salesreport)
-================================================================================
-Available for: Supervisor, Team Leader, IT, Manager.
+B. Team Leader (Agency)
+   - Laporan Detail (per WOK):
+       Choose WOK → Year → Month → then choose:
+         * 📥 Download CSV   → all orders (any status) as a CSV file.
+         * 📋 Tampilkan Data → per‑salesperson list with order details.
+         * 📦 Popular Paket (Agency) → list of completed packages (Agency only) with counts and percentages.
+   - (No summary report, no usage report.)
 
-How to use:
-1. Send /salesreport.
-2. Choose a WOK:
-   • MANADO TALAUD
-   • BOLAANG MONGONDOW
-   • GORONTALO - PAHUWATO
-   • BITUNG MINAHASA
-3. Choose a Channel:
-   • B2B2C&OTHERS
-   • AGENCY
-   • GRAPARI
-   • SOBI AFFILIATE
-   • WEB&APP
-   (Team Leader: channel is forced to AGENCY – no choice.)
-4. Choose a Month (January to December).
-5. The bot processes data and sends the report.
+C. Team Leader Grapari / CS Grapari
+   - Same as Team Leader (Agency), but all data is filtered to GRAPARI channel.
+   - Additional report: “Grapari Performance (per STO)”:
+       Choose Year (2025 or 2026) → Month → then choose:
+         * 📊 Lihat Ringkasan → summary table by STO (city/area) (Input, Completed, Fallout, IO/PS, Contribution, MoM).
+         * 📥 Download CSV → all orders (any status) for that month as a CSV file.
 
-What the report shows:
-- For AGENCY channel:
-   – Each salesperson’s name, total orders, and counts per status (all 27 statuses + OTHER).
-   – Team Leader also sees a list of Order IDs with their status.
-- For other channels (GRAPARI, etc.):
-   – Aggregated totals per status for that channel and WOK.
+D. Inputters, Salesforce, Technician, HSA
+   - Only order lookup (single / bulk). No sales reports.
 
-The report is split into multiple messages (one per salesperson) to avoid character limits.
+USAGE REPORT (for Managers, Supervisors, HSA, IT)
+-------------------------------------------------
+- Click “Laporan Pengguna Bot” or type /report followed by day|week|month.
+- Daily / weekly: text summary of who searched, how many times, and duration.
+- Monthly: CSV file with detailed columns (TelegramID, Name, SubRole, number of lookups, first lookup, last lookup, duration).
+
+GUIDE COMMAND
+-------------
+- Type /guide or /help anywhere. The bot shows a help page tailored to your role.
+
+CANCELLING AN OPERATION
+-----------------------
+- Type /cancel at any time to abort the current conversation and return to the main menu.
+
+TROUBLESHOOTING
+---------------
+- If the bot does not respond, try /start again.
+- If an Order ID is not found, the bot shows the last update date (with time) and asks you to try another ID.
+- If you see an error, please contact IT with a screenshot of the error message.
 
 ================================================================================
-5. USAGE REPORT (/report)
-================================================================================
-Available for: Manager, Supervisor, HSA, IT.
-
-Shows how many times each registered user has used /start to check orders.
-
-Commands:
-/report day        – Today’s usage (text summary)
-/report week       – This week’s usage (text)
-/report month      – This month’s usage (CSV file)
-/report 2026-04-01 2026-04-10 – Custom date range (CSV file)
-
-The CSV file can be opened in Excel or Google Sheets.
-
-================================================================================
-6. HELP AND GUIDE (/help, /guide)
-================================================================================
-/help   – Lists all commands with short descriptions.
-/guide  – Shows a detailed message based on your role, including how to check orders and how to use the sales report (if applicable).
-
-================================================================================
-7. ROLE ACCESS SUMMARY
-================================================================================
-| Role               | /start | /salesreport | /report | /pending | /guide |
-|--------------------|--------|--------------|---------|----------|--------|
-| Agency - Team Leader|   Yes  | Yes          | No      | No       | Yes    |
-| Agency - Salesforce |   Yes  | No           | No      | No       | Yes    |
-| Branch - Inputters  |   Yes  | No           | No      | No       | Yes    |
-| Branch - Supervisor |   Yes  | Yes          | Yes     | No       | Yes    |
-| Branch - Manager    |   Yes  | Yes          | Yes     | No       | Yes    |
-| Branch - IT         |   Yes  | Yes          | Yes     | Yes      | Yes    |
-| Technician - Technician | Yes | No        | No      | No       | Yes    |
-| Technician - HSA    |   Yes  | Yes          | Yes     | No       | Yes    |
-
-Note: /salesreport and /report are only available after approval.
-
-================================================================================
-8. TROUBLESHOOTING
-================================================================================
-Bot doesn't respond /start:
-- You are not registered or not approved. Register with /register and wait for IT approval.
-- The bot may be down. Send /ping – if it replies "pong", the bot is alive.
-
-Order ID not found:
-- Check for typos, extra spaces, or wrong case. The bot ignores case but not spaces.
-- The Order ID may not exist in the order sheet.
-
-Sales report empty or error:
-- Ensure you selected a WOK, Channel, and Month that have data.
-- If you see "Message_too_long", it has been fixed – contact IT if still occurs.
-
-Approval buttons not appearing:
-- Only the IT user (Telegram ID set in environment variable) receives them. If you are IT, check your chat with the bot.
-
-Need to change role or re‑register?
-- Contact IT. They can manually edit the Users sheet or delete your entry so you can re‑register.
-
-================================================================================
-For further assistance, contact your IT administrator.
+                               END OF FILE
 ================================================================================
