@@ -401,7 +401,7 @@ async def send_guide(update: Update, user_id, context: ContextTypes.DEFAULT_TYPE
             "🔍 *Cek Order (satu)*:\n"
             "Klik tombol 'Cek Order', lalu masukkan satu Order ID.\n\n"
             "📦 *Cek Banyak Order*:\n"
-            "Klik tombol 'Cek Banyak Order', lalu masukkan 2 hingga 10 Order ID (dipisah spasi).\n\n"
+            "Klik tombol 'Cek Banyak Order', lalu masukkan 2 hingga 10 Order ID (dipisah spasi, koma, atau baris baru).\n\n"
             "📊 *Laporan Performa Sales*:\n"
             "Klik tombol 'Cek Laporan Sales' dan ikuti menu interaktif (tersedia untuk Supervisor, Team Leader, IT, Manager, Team Leader Grapari, CS Grapari).\n\n"
             "📊 *Laporan Pengguna Bot*:\n"
@@ -416,7 +416,7 @@ async def send_guide(update: Update, user_id, context: ContextTypes.DEFAULT_TYPE
             "🔍 *Cek Order (satu)*:\n"
             "Klik tombol 'Cek Order', lalu masukkan satu Order ID.\n\n"
             "📦 *Cek Banyak Order*:\n"
-            "Klik tombol 'Cek Banyak Order', lalu masukkan 2 hingga 10 Order ID (dipisah spasi).\n\n"
+            "Klik tombol 'Cek Banyak Order', lalu masukkan 2 hingga 10 Order ID (dipisah spasi, koma, atau baris baru).\n\n"
             "📊 *Laporan*:\n"
             "Laporan hanya tersedia untuk Supervisor, Manager, HSA, IT, Team Leader, Team Leader Grapari, dan CS Grapari.\n\n"
             "Untuk daftar perintah lengkap, ketik /help."
@@ -684,15 +684,17 @@ async def bulk_order_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return ConversationHandler.END
     await query.message.reply_text(
         "Masukkan 2 hingga 10 Order ID dalam satu pesan.\n"
-        "Pisahkan dengan spasi.\n\n"
-        "Contoh: AOi123 AOi456 AOi789"
+        "Pisahkan dengan spasi, koma, atau baris baru.\n\n"
+        "Contoh: AOi123 AOi456 AOi789\n"
+        "Atau: AOi123, AOi456, AOi789"
     )
     return BULK_AWAITING_IDS
 
 async def process_bulk_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     raw_text = update.message.text.strip()
-    order_ids = re.split(r'\s+', raw_text)
+    # Split by whitespace OR commas (including spaces after commas)
+    order_ids = re.split(r'[\s,]+', raw_text)
     order_ids = [clean_text(oid) for oid in order_ids if oid]
     if len(order_ids) < 2 or len(order_ids) > 10:
         await update.message.reply_text("Jumlah Order ID harus antara 2 dan 10. Silakan coba lagi.")
@@ -749,7 +751,7 @@ async def sales_report_main(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.message.reply_text("Pilih jenis laporan:", reply_markup=InlineKeyboardMarkup(keyboard))
     return SALES_WOK
 
-# ---------- GRAPARI PERFORMANCE (per STO) - FIXED ----------
+# ---------- GRAPARI PERFORMANCE (per STO) ----------
 async def grapari_sto_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -759,9 +761,7 @@ async def grapari_sto_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.reply_text("Anda tidak memiliki akses ke laporan ini.")
         return ConversationHandler.END
 
-    # Delete the current "Pilih jenis laporan" message
     await query.message.delete()
-    # Send year selection as a new message
     year_buttons = [
         [InlineKeyboardButton("2025", callback_data="stoyear_2025")],
         [InlineKeyboardButton("2026", callback_data="stoyear_2026")]
@@ -776,9 +776,7 @@ async def grapari_sto_year_selected(update: Update, context: ContextTypes.DEFAUL
     year = int(query.data.split("_")[1])
     context.user_data["grapari_sto_year"] = year
 
-    # Delete the year selection message
     await query.message.delete()
-    # Send month selection
     month_keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("Januari", callback_data="stomonth_1"),
          InlineKeyboardButton("Februari", callback_data="stomonth_2"),
@@ -807,9 +805,7 @@ async def grapari_sto_month_selected(update: Update, context: ContextTypes.DEFAU
     context.user_data["grapari_sto_month_num"] = month_num
     context.user_data["grapari_sto_month_name"] = month_name
 
-    # Delete the month selection message
     await query.message.delete()
-    # Send options
     option_keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("📊 Lihat Ringkasan", callback_data="sto_summary")],
         [InlineKeyboardButton("📥 Download CSV", callback_data="sto_csv")]
