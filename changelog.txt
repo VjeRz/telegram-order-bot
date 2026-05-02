@@ -1,12 +1,15 @@
 ================================================================================
-CEK ORDER SF BRANCH MANADO – TELEGRAM BOT
-COMPLETE CHANGELOG
+                  TELEGRAM ORDER BOT – CHANGELOG & USER GUIDE
+                                  (ENGLISH)
+================================================================================
+
+                            COMPLETE CHANGELOG
 ================================================================================
 
 Version 1.0 – Initial Release (April 4, 2026)
----------------------------------------------
+------------------------------------------------
 - Basic bot with /start command.
-- Reads Order ID from a Google Sheet (column headers: Order ID, Channel Name, SalesForce, Tanggal Submit, Status Order, Fallout Reason).
+- Reads Order ID from a Google Sheet (columns: Order ID, Channel Name, SalesForce, Tanggal Submit, Status Order, Fallout Reason).
 - Replies with order details in plain text.
 - Simple conversation handler (no timeout).
 - No registration, no approval.
@@ -15,12 +18,12 @@ Version 1.0 – Initial Release (April 4, 2026)
 Version 1.1 – Cloudflare Proxy & Python 3.12 fix (April 4)
 ----------------------------------------------------------
 - Added Cloudflare Worker proxy to bypass Railway IP blocks.
-- Added runtime.txt to force Python 3.12 (avoided a library error).
+- Added runtime.txt to force Python 3.12.
 - Environment variable CLOUDFLARE_WORKER_URL.
 
 Version 1.2 – Case‑insensitive matching & cleaning (April 5)
 -------------------------------------------------------------
-- clean_text() function removes invisible characters (zero‑width spaces, non‑breaking spaces).
+- clean_text() function removes invisible characters.
 - Order ID matching made case‑insensitive (.lower()).
 - Removed Markdown parsing to avoid errors.
 - Greeting changed to "Semangat Pagi, Masukan Order ID..." (fixed, no time check).
@@ -41,15 +44,13 @@ Version 2.0 – Registration & Approval System (April 10)
 - /pending command (IT only) lists pending registrations.
 - Every order lookup is logged to UsageLog.
 - /report command for usage reports (day/week/month/custom range, CSV for monthly/custom).
-- Report access: Manager, Supervisor, HSA, IT.
 
 Version 2.1 – WOK and SFID only for Agency (April 11)
------------------------------------------------------
+------------------------------------------------------
 - During registration, only Agency group is asked for WOK (4 areas: Manado‑Talaud, Bitung‑Minahasa, Bolaang Mongondow, Gorontalo) and SFID.
-- Branch and Technician skip these fields.
 
 Version 2.2 – Fixed approval callback (April 14)
-------------------------------------------------
+-------------------------------------------------
 - Changed users_sheet.update() to update_cell() to fix API error.
 - /pending buttons now include row index for correct row update.
 
@@ -57,51 +58,115 @@ Version 2.3 – Welcome guides /guide command (April 14)
 -------------------------------------------------------
 - New command /guide – tailored welcome/help message based on role.
 - After approval, user automatically receives welcome message.
-- /start shows registration guide for unregistered users, otherwise directly asks for Order ID (no extra guide).
+- /start shows registration guide for unregistered users, otherwise directly asks for Order ID.
 
 Version 2.4 – Sales performance report (April 25)
--------------------------------------------------
+--------------------------------------------------
 - New command /salesreport (interactive menu).
 - Only Supervisor, Team Leader, IT, Manager can use it.
-- Step 1: choose WOK (4 options).
-- Step 2: choose Channel (B2B2C&OTHERS, AGENCY, GRAPARI, SOBI AFFILIATE, WEB&APP).
-   – Team Leader automatically forced to AGENCY (skips channel step).
-- Step 3: choose Month (January–December).
-- Report counts orders based on Tanggal Input (supports both DD/MM/YYYY and YYYY-MM-DD formats).
-- For AGENCY channel:
-   – Per‑salesperson breakdown with total orders and status counts (all 27 statuses + OTHER).
-   – Team Leader additionally sees a list of Order IDs with their status.
-- For non‑AGENCY channels: aggregated totals per status.
-- Messages split into separate messages per salesperson to avoid Telegram 4096 character limit.
-- No Markdown in reports; plain text with emojis.
+- Step 1: choose WOK. Step 2: choose Channel (B2B2C&OTHERS, AGENCY, GRAPARI, SOBI AFFILIATE, WEB&APP). Team Leader forced to AGENCY.
+- Step 3: choose Month. Counts orders based on Tanggal Input.
+- For AGENCY channel: per‑salesperson breakdown with total orders and status counts. Team Leader additionally sees list of Order IDs.
+- Messages split to avoid 4096 char limit.
 
 Version 2.5 – Full status list & bug fixes (April 25)
 ------------------------------------------------------
-- Predefined list of 27 order statuses (from business requirements).
-- Any unknown status counts as "OTHER".
-- Fixed gspread exception (CellNotFound does not exist; replaced with generic Exception).
-- Removed all parse_mode="Markdown" to avoid "Can't parse entities" error caused by special characters in Order IDs.
-- Fixed sales report not showing any output (Message_too_long error) by sending each salesperson separately.
-- Added chunking for Team Leader's order list (splits into multiple messages if needed).
-- Order lookup restored (was broken by gspread exception).
+- Predefined list of 27 order statuses, unknown status counts as "OTHER".
+- Fixed gspread exception, removed parse_mode="Markdown".
+- Fixed sales report by sending each salesperson separately, added chunking for order list.
+- Order lookup restored.
 
-Current Features (as of April 25, 2026)
-----------------------------------------
-- Registration with role selection, WOK/SFID for Agency only.
-- IT approval via /pending or inline buttons.
-- Order lookup (/start) for approved users.
-- Usage logging & /report for Manager/Supervisor/HSA/IT.
-- Sales performance report (/salesreport) for Supervisor, Team Leader, IT, Manager.
-- Help (/help) and Guide (/guide) commands.
-- Cloudflare proxy for Railway connectivity.
-- Google Sheets integration (order sheet + Bot_Data with Users and UsageLog tabs).
-- All messages use plain text (emojis allowed, no Markdown).
+Version 2.6 – Bulk order check (April 25)
+-----------------------------------------
+- New command /bulk – check multiple Order IDs at once (spaces or newlines).
+- Provides summary of found/not‑found IDs.
+- Updated guide with /bulk.
 
-Known limitations
------------------
-- Order sheet with >10,000 rows may cause slower responses. Archive old data recommended.
-- Sales report processes all rows; acceptable for up to ~10,000 rows. Cache refreshes every 5 minutes.
+Version 2.7 – Interactive menu & UI overhaul (April 28)
+--------------------------------------------------------
+- Replaced slash commands with inline button menus (except /report, /pending, /register, /help, /guide, /ping).
+- Main menu shows different buttons based on user role.
+- Added "Cek Banyak Order" button with validation.
+- Added "Cek Laporan Sales", "Panduan Pengguna".
+- Removed timeout logic.
+
+Version 2.8 – Sales report enhancements (April 28)
+---------------------------------------------------
+- Two sub‑reports: "Laporan Detail (per WOK)" and "Ringkasan (per WOK & Channel)".
+- For Manager, Supervisor, Inputters, IT: detailed status breakdown with percentages.
+- Team Leader retains original per‑salesperson order list.
+- Ringkasan now sends 6 formatted messages with MoM, monospaced tables (later mobile bullet lists).
+
+Version 2.9 – Last update date & mobile readability (April 29)
+---------------------------------------------------------------
+- Added get_last_order_date() to fetch latest Tanggal Input.
+- Error messages show last order date instead of current time.
+- Manager detailed report and 6 Ringkasan messages include footer "📅 Last Update Data: DD/MM/YYYY".
+- Ringkasan tables converted to bullet‑point lists for mobile readability.
+- Added new field "Paket" to single and bulk order replies.
+
+Version 2.10 – CSV download for Team Leader (April 29)
+-------------------------------------------------------
+- For Team Leader: after selecting WOK → Year → Month, two options: "📥 Download CSV" (exports all order fields) and "📋 Tampilkan Data".
+- Removed channel selection for Team Leader (automatically AGENCY).
+
+Version 2.11 – Interactive usage report (April 29)
+---------------------------------------------------
+- Added "📊 Laporan Pengguna Bot" button for Manager, Supervisor, HSA, IT.
+- Sub‑menu: Harian, Mingguan, Bulanan (Daily/Weekly text, Monthly CSV).
+- Fallback /report still works.
+
+Version 2.12 – Grapari role & channel (April 30, 2026)
+-------------------------------------------------------
+- Added new role group "Grapari" with subroles: Team Leader Grapari, CS Grapari.
+- Both subroles have the same privileges as Agency Team Leader: they can access per‑WOK detail report, download CSV, view per‑salesperson list, and popular paket – but all data filtered to channel = "GRAPARI".
+- Registration flow updated: new button "Grapari" in role selection, with its own sub‑role keyboard.
+- Updated permission function to include the new subroles.
+
+Version 2.13 – Popular paket in Summary report (May 1, 2026)
+------------------------------------------------------------
+- Summary report (Ringkasan) now sends 5 additional messages:
+  * 1 global table: all completed packages across all channels and WOKs, with counts and percentages.
+  * 4 per‑WOK tables: completed packages for each working area (MANADO TALAUD, BOLAANG MONGONDOW, GORONTALO - PAHUWATO, BITUNG MINAHASA).
+- No top‑N limit – every package with at least one COMPLETED order appears.
+- Wording improved: "Cmpl" → "Comp", "Flt" → "FO" in all summary tables.
+
+Version 2.14 – Grapari Performance (per STO) report (May 1, 2026)
+-----------------------------------------------------------------
+- New report available for Team Leader Grapari and CS Grapari: "📊 Grapari Performance (per STO)".
+- User selects year (2025 or 2026) → month → then two options:
+  * 📊 Lihat Ringkasan – summary table by STO (city/area) with metrics: Input, Comp, FO, IO/PS, Kontrib, MoM.
+  * 📥 Download CSV – export of all orders (any status) for the chosen month, GRAPARI channel only.
+- Fixed a bug where the report got stuck after year selection (now deletes old messages and sends fresh ones).
+
+Version 2.15 – Bulk order separator & timestamp footer (May 2, 2026)
+--------------------------------------------------------------------
+- Bulk order now accepts commas as separators (e.g., AOi123, AOi456, AOi789). Spaces and newlines still work.
+- Last update footer now includes time (HH:MM) – e.g., "📅 Last Update Data: 02/05/2026 14:30".
+- Improved date parsing to support multiple input formats (DD/MM/YYYY HH:MM, YYYY-MM-DD HH:MM:SS, etc.).
+- Minor stability fixes for menu display from callback queries.
 
 ================================================================================
-End of Changelog
+                              CURRENT FEATURES
 ================================================================================
+
+- Registration with role selection (Agency, Branch, Technician, Grapari). Agency users also enter WOK and SFID.
+- IT approval via /pending with inline buttons.
+- Single order lookup (🔍 Cek Order) – shows all fields including Paket.
+- Bulk order lookup (2–10 IDs) – accepts spaces, commas, or newlines.
+- Sales reports:
+  * Laporan Detail (per WOK): for Manager/Supervisor/IT shows status breakdown with percentages; for Team Leader (Agency & Grapari) shows CSV download, per‑salesperson list, and popular paket.
+  * Ringkasan (per WOK & Channel): 6 tables + 5 popular paket tables (global + per WOK).
+  * Grapari Performance (per STO): summary by STO + CSV export (Grapari only).
+- Usage report via button (daily/weekly text, monthly CSV).
+- Role‑based main menu and guide text (/guide).
+- Last update date & time footer in error messages, detail reports, and all summary tables.
+- Cloudflare proxy for stable connection.
+
+================================================================================
+                              KNOWN LIMITATIONS
+================================================================================
+
+- Order sheet >10,000 rows may slow responses; archive old data regularly.
+- Sales report processes all rows; acceptable up to ~15k rows (cached every 5 minutes).
+- Bulk order IDs must be between 2 and 10.
