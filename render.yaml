@@ -1,0 +1,19 @@
+services:
+  - type: worker
+    name: order-bot
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python order_bot.py
+    envVars:
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: GOOGLE_CREDENTIALS_JSON
+        sync: false
+      - key: SPREADSHEET_NAME
+        value: Order_Data_TelBot
+      - key: BOT_DATA_SHEET_NAME
+        value: Bot_Data
+      - key: IT_TELEGRAM_ID
+        sync: false
+      - key: CLOUDFLARE_WORKER_URL
+        sync: false
