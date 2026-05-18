@@ -18,6 +18,11 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import csv
 import io
+from dotenv import load_dotenv
+from pathlib import Path
+
+BASE_DIR = Path(__file__).resolve().parent
+load_dotenv(BASE_DIR / ".env")
 
 # ---------- CONFIGURATION ----------
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
@@ -26,6 +31,11 @@ ORDER_SHEET_NAME = os.environ.get("SPREADSHEET_NAME", "Order_Data_TelBot")
 BOT_DATA_SHEET_NAME = os.environ.get("BOT_DATA_SHEET_NAME", "Bot_Data")
 CLOUDFLARE_WORKER_URL = os.environ.get("CLOUDFLARE_WORKER_URL", "")
 IT_TELEGRAM_ID = int(os.environ.get("IT_TELEGRAM_ID", "0"))
+
+if not TELEGRAM_BOT_TOKEN:
+    raise Exception("TELEGRAM_BOT_TOKEN tidak ditemukan di .env")
+if not GOOGLE_CREDENTIALS_JSON:
+    raise Exception("GOOGLE_CREDENTIALS_JSON tidak ditemukan di .env")
 
 # Conversation states
 WAITING_FOR_SINGLE_ORDER = 1
@@ -48,6 +58,7 @@ REPORT_OPTION = 40
 GRAPARI_STO_YEAR = 50
 GRAPARI_STO_MONTH = 51
 GRAPARI_STO_OPTION = 52
+TEAM_LEADER_METRICS_CSV = 53   # new state for metrics CSV
 
 ALL_STATUSES = [
     "PENDING_CUSTOMER_VERIFICATION", "PROVISION_START", "TECH_ASSIGNED",
@@ -100,18 +111,42 @@ def clean_text(s):
     s = re.sub(r'[\u200b\u00a0\u200c\u200d]', '', str(s))
     return s.strip()
 
+def _transform_record(rec):
+    """Convert new sheet column names to old names for compatibility with reports."""
+    return {
+        "Order ID": rec.get("order_id", ""),
+        "STO": rec.get("sto_co", ""),
+        "WOK": rec.get("wok", ""),
+        "Service ID": rec.get("service_id", ""),
+        "Paket": rec.get("product_commercial_name", ""),
+        "Status Order": rec.get("process_state", ""),
+        "Tanggal Complete": rec.get("ps_ts", ""),
+        "Channel Name": rec.get("channel_group", ""),
+        "Fallout Type": rec.get("fallout_category", ""),
+        "Fallout Reason": rec.get("fallout_reason", ""),
+        "SalesForce": rec.get("sf_name_or_source", ""),
+        "Tanggal Register": rec.get("re_ts", ""),
+        "Tanggal Input": rec.get("io_ts", ""),
+        "Ket WO": rec.get("ket_wo", ""),
+        "Sub Error Code": rec.get("sub_error_code", ""),
+        "Technician Notes": rec.get("ket_teknisi", ""),
+        "Price Package": rec.get("price_package", ""),
+        "Fee PSB": rec.get("fee_psb", ""),
+    }
+
+def get_raw_records():
+    raw = order_sheet.get_all_records()
+    return [_transform_record(r) for r in raw]
+
 def get_order_sheet_records():
     if not hasattr(get_order_sheet_records, "cache"):
         get_order_sheet_records.cache = None
         get_order_sheet_records.cache_time = None
     now = datetime.now()
     if get_order_sheet_records.cache is None or (now - get_order_sheet_records.cache_time).total_seconds() > 300:
-        get_order_sheet_records.cache = order_sheet.get_all_records()
+        get_order_sheet_records.cache = get_raw_records()
         get_order_sheet_records.cache_time = now
     return get_order_sheet_records.cache
-
-def get_raw_records():
-    return order_sheet.get_all_records()
 
 def get_last_order_date():
     """Return the latest Tanggal Input from the order sheet as DD/MM/YYYY HH:MM,
@@ -155,18 +190,26 @@ def find_order_details(order_id: str):
         if cell is None:
             return None
         row = order_sheet.row_values(cell.row)
+        # New sheet columns (0-indexed) as per sample
         return {
+            "order_id": row[0] if len(row) > 0 else "-",
             "sto": row[1] if len(row) > 1 else "-",
             "wok": row[2] if len(row) > 2 else "-",
-            "order_status": row[3] if len(row) > 3 else "N/A",
-            "channel": row[4] if len(row) > 4 else "N/A",
-            "fallout": row[5] if len(row) > 5 else "(Blank)",
-            "salesforce": row[6] if len(row) > 6 else "N/A",
+            "service_id": row[3] if len(row) > 3 else "-",
+            "paket": row[4] if len(row) > 4 else "-",
+            "price_package": row[5] if len(row) > 5 else "-",
+            "order_status": row[6] if len(row) > 6 else "N/A",
             "tanggal_complete": row[7] if len(row) > 7 else "-",
-            "tanggal_input": row[8] if len(row) > 8 else "-",
-            "sub_error": row[9] if len(row) > 9 else "-",
-            "technician_notes": row[10] if len(row) > 10 else "-",
-            "paket": row[11] if len(row) > 11 else "-",
+            "channel": row[8] if len(row) > 8 else "N/A",
+            "fallout_type": row[9] if len(row) > 9 else "-",
+            "fallout_reason": row[10] if len(row) > 10 else "-",
+            "salesforce": row[11] if len(row) > 11 else "N/A",
+            "tanggal_register": row[12] if len(row) > 12 else "-",
+            "tanggal_input": row[13] if len(row) > 13 else "-",
+            "fee_psb": row[14] if len(row) > 14 else "-",
+            "ket_wo": row[15] if len(row) > 15 else "-",
+            "sub_error": row[16] if len(row) > 16 else "-",
+            "technician_notes": row[17] if len(row) > 17 else "-",
         }
     except Exception as e:
         logger.error(f"Error finding order {clean_input}: {e}")
@@ -639,7 +682,7 @@ async def single_order_start(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if not is_user_approved(user_id):
         await query.message.reply_text("Anda belum terdaftar atau belum disetujui. Silakan gunakan tombol Daftar.")
         return ConversationHandler.END
-    await query.message.reply_text("Masukkan Order ID (contoh: AOs326032509275620607db90):")
+    await query.message.reply_text("Masukkan Order ID (contoh: AOi4260518085429676bb1650):")
     return WAITING_FOR_SINGLE_ORDER
 
 async def receive_single_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -658,18 +701,22 @@ async def receive_single_order(update: Update, context: ContextTypes.DEFAULT_TYP
         return WAITING_FOR_SINGLE_ORDER
     log_usage(user_id, order_id)
     reply = (
-        f"✅ Order ID: {order_id}\n"
+        f"✅ Order ID: {data['order_id']}\n"
         f"📠 STO: {data['sto']}\n"
         f"🪪 WOK: {data['wok']}\n"
-        f"⚙️ Order Status: {data['order_status']}\n"
-        f"📢 Channel Name: {data['channel']}\n"
-        f"⚠️ Fallout Reason: {data['fallout']}\n"
-        f"👤 Salesforce: {data['salesforce']}\n"
-        f"📅 Tanggal Complete: {data['tanggal_complete']}\n"
-        f"📅 Tanggal Input: {data['tanggal_input']}\n"
+        f"🆔 Service ID: {data['service_id']}\n"
+        f"📦 Paket: {data['paket']}\n"
+        f"⚙️ Status Order: {data['order_status']}\n"
+        f"📅 Tgl PS/Complete: {data['tanggal_complete']}\n"
+        f"📢 Nama Channel: {data['channel']}\n"
+        f"⚠️ Fallout Type: {data['fallout_type']}\n"
+        f"⚠️ Fallout Reason: {data['fallout_reason']}\n"
+        f"👤 Salesforce/Source: {data['salesforce']}\n"
+        f"📅 Tgl Register: {data['tanggal_register']}\n"
+        f"📅 Tgl Input Order: {data['tanggal_input']}\n"
+        f"📝 Ket WO: {data['ket_wo']}\n"
         f"🧠 Sub Error Code: {data['sub_error']}\n"
-        f"👨🏼‍🔧 Technician Notes: {data['technician_notes']}\n"
-        f"📦 Paket: {data['paket']}"
+        f"👨🏼‍🔧 Technician Notes: {data['technician_notes']}"
     )
     await update.message.reply_text(reply)
     return ConversationHandler.END
@@ -693,7 +740,6 @@ async def bulk_order_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def process_bulk_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     raw_text = update.message.text.strip()
-    # Split by whitespace OR commas (including spaces after commas)
     order_ids = re.split(r'[\s,]+', raw_text)
     order_ids = [clean_text(oid) for oid in order_ids if oid]
     if len(order_ids) < 2 or len(order_ids) > 10:
@@ -710,18 +756,22 @@ async def process_bulk_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
             not_found.append(oid)
     for oid, data in found:
         reply = (
-            f"✅ Order ID: {oid}\n"
+            f"✅ Order ID: {data['order_id']}\n"
             f"📠 STO: {data['sto']}\n"
             f"🪪 WOK: {data['wok']}\n"
-            f"⚙️ Order Status: {data['order_status']}\n"
-            f"📢 Channel Name: {data['channel']}\n"
-            f"⚠️ Fallout Reason: {data['fallout']}\n"
-            f"👤 Salesforce: {data['salesforce']}\n"
-            f"📅 Tanggal Complete: {data['tanggal_complete']}\n"
-            f"📅 Tanggal Input: {data['tanggal_input']}\n"
+            f"🆔 Service ID: {data['service_id']}\n"
+            f"📦 Paket: {data['paket']}\n"
+            f"⚙️ Status Order: {data['order_status']}\n"
+            f"📅 Tgl PS/Complete: {data['tanggal_complete']}\n"
+            f"📢 Nama Channel: {data['channel']}\n"
+            f"⚠️ Fallout Type: {data['fallout_type']}\n"
+            f"⚠️ Fallout Reason: {data['fallout_reason']}\n"
+            f"👤 Salesforce/Source: {data['salesforce']}\n"
+            f"📅 Tgl Register: {data['tanggal_register']}\n"
+            f"📅 Tgl Input Order: {data['tanggal_input']}\n"
+            f"📝 Ket WO: {data['ket_wo']}\n"
             f"🧠 Sub Error Code: {data['sub_error']}\n"
-            f"👨🏼‍🔧 Technician Notes: {data['technician_notes']}\n"
-            f"📦 Paket: {data['paket']}"
+            f"👨🏼‍🔧 Technician Notes: {data['technician_notes']}"
         )
         await update.message.reply_text(reply)
     if not_found:
@@ -808,7 +858,8 @@ async def grapari_sto_month_selected(update: Update, context: ContextTypes.DEFAU
     await query.message.delete()
     option_keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("📊 Lihat Ringkasan", callback_data="sto_summary")],
-        [InlineKeyboardButton("📥 Download CSV", callback_data="sto_csv")]
+        [InlineKeyboardButton("📥 Download CSV (Raw Orders)", callback_data="sto_csv")],
+        [InlineKeyboardButton("📥 Download Metrics CSV", callback_data="sto_metrics_csv")]
     ])
     await context.bot.send_message(
         chat_id=update.effective_user.id,
@@ -845,97 +896,164 @@ async def grapari_sto_option_callback(update: Update, context: ContextTypes.DEFA
                 continue
         return None, None
 
+    # Helper to compute IO, RE, PS, and FO counts for a list of records
+    def compute_metrics(recs):
+        io = 0
+        re = 0
+        ps = 0
+        fo = 0
+        for r in recs:
+            if r.get("Tanggal Input"):
+                io += 1
+            if r.get("Tanggal Register"):
+                re += 1
+            if r.get("Tanggal Complete"):
+                ps += 1
+            if r.get("Status Order", "").upper().strip() == "FALLOUT":
+                fo += 1
+        return io, re, ps, fo
+
+    # Filter records for a given year, month, and (optional) channel and STO
+    def filter_records(recs, y, m, channel=None, sto=None):
+        filtered = []
+        for r in recs:
+            tgl = r.get("Tanggal Input", "")
+            yr, mo = extract_date(tgl)
+            if yr == y and mo == m:
+                if channel and r.get("Channel Name", "").strip().upper() != channel:
+                    continue
+                if sto and r.get("STO", "").strip() != sto:
+                    continue
+                filtered.append(r)
+        return filtered
+
+    # For summary, we need aggregated data per group (STO or overall)
     if action == "sto_csv":
-        csv_records = []
-        for rec in records:
-            channel = rec.get("Channel Name", "").strip().upper()
-            if channel != "GRAPARI":
-                continue
-            tgl = rec.get("Tanggal Input", "")
-            y, m = extract_date(tgl)
-            if y == year and m == month_num:
-                csv_records.append(rec)
+        # Export raw orders (all columns) for GRAPARI channel
+        csv_records = filter_records(records, year, month_num, channel="GRAPARI")
         if not csv_records:
             await query.edit_message_text(f"Tidak ada data GRAPARI untuk {month_name} {year}.")
             return ConversationHandler.END
 
         output = io.StringIO()
         writer = csv.writer(output)
-        writer.writerow(["Order ID", "STO", "WOK", "Status Order", "Channel Name", "Fallout Reason", "SalesForce", "Tanggal Complete", "Tanggal Input", "Sub Error Code", "Technician Notes", "Paket"])
-        for rec in csv_records:
-            writer.writerow([
-                rec.get("Order ID", ""),
-                rec.get("STO", ""),
-                rec.get("WOK", ""),
-                rec.get("Status Order", ""),
-                rec.get("Channel Name", ""),
-                rec.get("Fallout Reason", ""),
-                rec.get("SalesForce", ""),
-                rec.get("Tanggal Complete", ""),
-                rec.get("Tanggal Input", ""),
-                rec.get("Sub Error Code", ""),
-                rec.get("Technician Notes", ""),
-                rec.get("Paket", "")
-            ])
+        # Get column names from first record (keys of transformed dict)
+        if csv_records:
+            headers = list(csv_records[0].keys())
+            writer.writerow(headers)
+            for rec in csv_records:
+                writer.writerow([rec.get(h, "") for h in headers])
         output.seek(0)
-        filename = f"grapari_sto_{year}_{month_num}.csv"
-        await query.message.reply_document(document=output, filename=filename, caption=f"📊 Data GRAPARI - {month_name} {year}")
+        filename = f"grapari_sto_{year}_{month_num}_raw.csv"
+        await query.message.reply_document(document=output, filename=filename, caption=f"📊 Raw Data GRAPARI - {month_name} {year}")
         await query.delete_message()
         return ConversationHandler.END
 
-    else:  # sto_summary
-        sto_stats = {}
-        total_input = 0
-        total_completed = 0
-        total_fallout = 0
+    elif action == "sto_metrics_csv":
+        # Export summary metrics per STO (and total row)
+        # Get all unique STOs from GRAPARI channel for the selected month
+        sto_records = filter_records(records, year, month_num, channel="GRAPARI")
+        if not sto_records:
+            await query.edit_message_text(f"Tidak ada data GRAPARI untuk {month_name} {year}.")
+            return ConversationHandler.END
 
-        for rec in records:
-            channel = rec.get("Channel Name", "").strip().upper()
-            if channel != "GRAPARI":
-                continue
-            sto = rec.get("STO", "").strip()
+        # Group by STO
+        sto_groups = {}
+        for rec in sto_records:
+            sto = rec.get("STO", "Unknown").strip()
             if not sto:
-                continue
-            tgl = rec.get("Tanggal Input", "")
-            y, m = extract_date(tgl)
-            if y is None or m is None:
-                continue
-            status = (rec.get("Status Order", "") or "").strip().upper()
-            if y == year and m == month_num:
-                total_input += 1
-                if status == "COMPLETED":
-                    total_completed += 1
-                elif status == "FALLOUT":
-                    total_fallout += 1
-                if sto not in sto_stats:
-                    sto_stats[sto] = {"input": 0, "completed": 0, "fallout": 0, "prev_input": 0}
-                sto_stats[sto]["input"] += 1
-                if status == "COMPLETED":
-                    sto_stats[sto]["completed"] += 1
-                elif status == "FALLOUT":
-                    sto_stats[sto]["fallout"] += 1
-            if y == prev_year and m == prev_month:
-                if sto not in sto_stats:
-                    sto_stats[sto] = {"input": 0, "completed": 0, "fallout": 0, "prev_input": 0}
-                sto_stats[sto]["prev_input"] += 1
+                sto = "Unknown"
+            if sto not in sto_groups:
+                sto_groups[sto] = []
+            sto_groups[sto].append(rec)
 
-        sorted_stos = sorted(sto_stats.items(), key=lambda x: x[1]["input"], reverse=True)
+        # Compute metrics for each STO and total
+        rows = []
+        for sto, group in sto_groups.items():
+            io, re, ps, fo = compute_metrics(group)
+            rows.append({
+                "STO": sto,
+                "IO": io,
+                "RE": re,
+                "PS": ps,
+                "IO/RE": (io / re * 100) if re > 0 else 0,
+                "IO/PS": (io / ps * 100) if ps > 0 else 0,
+                "RE/PS": (re / ps * 100) if ps > 0 else 0,
+                "FO": fo,
+                "FO%": (fo / io * 100) if io > 0 else 0,
+            })
+        # Total
+        total_io, total_re, total_ps, total_fo = compute_metrics(sto_records)
+        rows.append({
+            "STO": "TOTAL",
+            "IO": total_io,
+            "RE": total_re,
+            "PS": total_ps,
+            "IO/RE": (total_io / total_re * 100) if total_re > 0 else 0,
+            "IO/PS": (total_io / total_ps * 100) if total_ps > 0 else 0,
+            "RE/PS": (total_re / total_ps * 100) if total_ps > 0 else 0,
+            "FO": total_fo,
+            "FO%": (total_fo / total_io * 100) if total_io > 0 else 0,
+        })
+
+        output = io.StringIO()
+        writer = csv.writer(output)
+        writer.writerow(["STO", "IO", "RE", "PS", "IO/RE%", "IO/PS%", "RE/PS%", "FO", "FO%"])
+        for row in rows:
+            writer.writerow([row["STO"], row["IO"], row["RE"], row["PS"],
+                             f"{row['IO/RE']:.2f}", f"{row['IO/PS']:.2f}", f"{row['RE/PS']:.2f}",
+                             row["FO"], f"{row['FO%']:.2f}"])
+        output.seek(0)
+        filename = f"grapari_sto_{year}_{month_num}_metrics.csv"
+        await query.message.reply_document(document=output, filename=filename, caption=f"📊 Metrics GRAPARI per STO - {month_name} {year}")
+        await query.delete_message()
+        return ConversationHandler.END
+
+    else:  # sto_summary (original text summary)
+        # Compute metrics per STO and total
+        sto_records = filter_records(records, year, month_num, channel="GRAPARI")
+        if not sto_records:
+            await query.edit_message_text(f"Tidak ada data GRAPARI untuk {month_name} {year}.")
+            return ConversationHandler.END
+
+        # Group by STO
+        sto_groups = {}
+        for rec in sto_records:
+            sto = rec.get("STO", "Unknown").strip()
+            if not sto:
+                sto = "Unknown"
+            if sto not in sto_groups:
+                sto_groups[sto] = []
+            sto_groups[sto].append(rec)
+
+        # Sort STOs alphabetically or by IO? We'll sort by IO descending.
+        sorted_stos = sorted(sto_groups.items(), key=lambda x: len(x[1]), reverse=True)
+
         lines = [f"📊 *RINGKASAN PER STO (GRAPARI)*", f"📅 {month_name.upper()} {year}", ""]
-        for sto, stats in sorted_stos:
-            inp = stats["input"]
-            comp = stats["completed"]
-            flt = stats["fallout"]
-            prev = stats["prev_input"]
-            completion = (comp / inp * 100) if inp > 0 else 0
-            contrib = (inp / total_input * 100) if total_input > 0 else 0
-            mom = ((inp - prev) / prev * 100) if prev > 0 else (100 if inp > 0 else 0)
-            lines.append(f"• *{sto}*: Input {inp} | Comp {comp} | FO {flt} | IO/PS {completion:.1f}% | Kontrib {contrib:.1f}% | MoM {mom:.1f}%")
-        total_completion = (total_completed / total_input * 100) if total_input > 0 else 0
-        total_prev = sum(stats.get("prev_input", 0) for stats in sto_stats.values())
-        total_mom = ((total_input - total_prev) / total_prev * 100) if total_prev > 0 else (100 if total_input > 0 else 0)
-        lines.append(f"\n• *TOTAL*: Input {total_input} | Comp {total_completed} | FO {total_fallout} | IO/PS {total_completion:.1f}% | Kontrib 100.0% | MoM {total_mom:.1f}%")
+        total_io, total_re, total_ps, total_fo = 0, 0, 0, 0
+        for sto, group in sorted_stos:
+            io, re, ps, fo = compute_metrics(group)
+            total_io += io
+            total_re += re
+            total_ps += ps
+            total_fo += fo
+            io_re = (io / re * 100) if re > 0 else 0
+            io_ps = (io / ps * 100) if ps > 0 else 0
+            re_ps = (re / ps * 100) if ps > 0 else 0
+            fo_pct = (fo / io * 100) if io > 0 else 0
+            lines.append(f"• *{sto}*: IO {io} | RE {re} | PS {ps}")
+            lines.append(f"  IO/RE {io_re:.1f}% | IO/PS {io_ps:.1f}% | RE/PS {re_ps:.1f}%")
+            lines.append(f"  FO {fo} ({fo_pct:.1f}%)")
+        # Total line
+        if total_io > 0:
+            total_io_re = (total_io / total_re * 100) if total_re > 0 else 0
+            total_io_ps = (total_io / total_ps * 100) if total_ps > 0 else 0
+            total_re_ps = (total_re / total_ps * 100) if total_ps > 0 else 0
+            total_fo_pct = (total_fo / total_io * 100) if total_io > 0 else 0
+            lines.append(f"\n• *TOTAL*: IO {total_io} | RE {total_re} | PS {total_ps}")
+            lines.append(f"  IO/RE {total_io_re:.1f}% | IO/PS {total_io_ps:.1f}% | RE/PS {total_re_ps:.1f}%")
+            lines.append(f"  FO {total_fo} ({total_fo_pct:.1f}%)")
         lines.append(f"\n📅 Last Update Data: {get_last_order_date()}")
-
         await query.edit_message_text("\n".join(lines), parse_mode="Markdown")
         return ConversationHandler.END
 
@@ -1037,6 +1155,7 @@ async def sales_month_selected(update: Update, context: ContextTypes.DEFAULT_TYP
     aggregate_only_roles = ["Manager", "Supervisor", "Inputters", "IT"]
 
     if subrole in aggregate_only_roles:
+        # Manager/Supervisor/IT – show status breakdown (unchanged)
         records = get_raw_records()
         filtered = []
         for rec in records:
@@ -1096,43 +1215,31 @@ async def sales_month_selected(update: Update, context: ContextTypes.DEFAULT_TYP
         await processing_msg.edit_text("\n".join(lines))
         return ConversationHandler.END
 
+    # Team Leader (Agency or Grapari) – show three options (CSV raw, list, popular paket, and new metrics CSV)
     if subrole == "Team Leader":
-        context.user_data["tl_wok"] = wok
-        context.user_data["tl_year"] = year
-        context.user_data["tl_month_num"] = month_num
-        context.user_data["tl_month_name"] = month_name
-        context.user_data["tl_channel"] = "AGENCY"
-        option_keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("📥 Download CSV", callback_data="tl_csv")],
-            [InlineKeyboardButton("📋 Tampilkan Data", callback_data="tl_show")],
-            [InlineKeyboardButton("📦 Popular Paket (Agency)", callback_data="tl_paket")]
-        ])
-        await query.edit_message_text(
-            f"WOK: {wok}\n📅 {month_name.upper()} {year}\n\nPilih format laporan:",
-            reply_markup=option_keyboard
-        )
-        return TEAM_LEADER_OPTION
+        channel = "AGENCY"
+    else:
+        channel = "GRAPARI"  # Team Leader Grapari or CS Grapari
 
-    elif subrole in ["Team Leader Grapari", "CS Grapari"]:
-        context.user_data["tl_wok"] = wok
-        context.user_data["tl_year"] = year
-        context.user_data["tl_month_num"] = month_num
-        context.user_data["tl_month_name"] = month_name
-        context.user_data["tl_channel"] = "GRAPARI"
-        option_keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("📥 Download CSV", callback_data="tl_csv")],
-            [InlineKeyboardButton("📋 Tampilkan Data", callback_data="tl_show")],
-            [InlineKeyboardButton("📦 Popular Paket (Grapari)", callback_data="tl_paket")]
-        ])
-        await query.edit_message_text(
-            f"📍 WOK: {wok} | Channel: GRAPARI\n📅 {month_name.upper()} {year}\n\nPilih format laporan:",
-            reply_markup=option_keyboard
-        )
-        return TEAM_LEADER_OPTION
+    context.user_data["tl_wok"] = wok
+    context.user_data["tl_year"] = year
+    context.user_data["tl_month_num"] = month_num
+    context.user_data["tl_month_name"] = month_name
+    context.user_data["tl_channel"] = channel
 
-    return ConversationHandler.END
+    option_keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("📥 Download CSV (Raw Orders)", callback_data="tl_csv")],
+        [InlineKeyboardButton("📋 Tampilkan Data", callback_data="tl_show")],
+        [InlineKeyboardButton("📦 Popular Paket", callback_data="tl_paket")],
+        [InlineKeyboardButton("📥 Download Metrics CSV", callback_data="tl_metrics_csv")]
+    ])
+    await query.edit_message_text(
+        f"📍 WOK: {wok} | Channel: {channel}\n📅 {month_name.upper()} {year}\n\nPilih format laporan:",
+        reply_markup=option_keyboard
+    )
+    return TEAM_LEADER_OPTION
 
-# ---------- TEAM LEADER OPTION CALLBACK (CSV, SHOW, PAKET) ----------
+# ---------- TEAM LEADER OPTION CALLBACK (CSV, SHOW, PAKET, METRICS CSV) ----------
 async def team_leader_option_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -1148,7 +1255,7 @@ async def team_leader_option_callback(update: Update, context: ContextTypes.DEFA
         await query.edit_message_text("Terjadi kesalahan. Silakan coba lagi.")
         return ConversationHandler.END
 
-    records = get_order_sheet_records()
+    records = get_raw_records()
     filtered = []
     for rec in records:
         rec_wok = rec.get("WOK", "")
@@ -1168,35 +1275,38 @@ async def team_leader_option_callback(update: Update, context: ContextTypes.DEFA
         except:
             continue
 
+    # Helper to extract date (for MTD calculations later, but not needed for raw CSV/list)
+    def extract_date(date_str):
+        if not date_str:
+            return None, None
+        date_str = clean_text(date_str)
+        for fmt in ["%d/%m/%Y %H:%M", "%d/%m/%Y", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d"]:
+            try:
+                dt = datetime.strptime(date_str, fmt)
+                return dt.year, dt.month, dt.day
+            except:
+                continue
+        return None, None, None
+
     if action == "tl_csv":
+        # Export raw order rows (all columns)
         if not filtered:
             await query.edit_message_text(f"Tidak ada data untuk WOK: {wok}, Bulan: {month_name} {year}.")
             return ConversationHandler.END
         output = io.StringIO()
         writer = csv.writer(output)
-        writer.writerow(["Order ID", "STO", "WOK", "Status Order", "Channel Name", "Fallout Reason", "SalesForce", "Tanggal Complete", "Tanggal Input", "Sub Error Code", "Technician Notes", "Paket"])
+        headers = list(filtered[0].keys())
+        writer.writerow(headers)
         for rec in filtered:
-            writer.writerow([
-                rec.get("Order ID", ""),
-                rec.get("STO", ""),
-                rec.get("WOK", ""),
-                rec.get("Status Order", ""),
-                rec.get("Channel Name", ""),
-                rec.get("Fallout Reason", ""),
-                rec.get("SalesForce", ""),
-                rec.get("Tanggal Complete", ""),
-                rec.get("Tanggal Input", ""),
-                rec.get("Sub Error Code", ""),
-                rec.get("Technician Notes", ""),
-                rec.get("Paket", "")
-            ])
+            writer.writerow([rec.get(h, "") for h in headers])
         output.seek(0)
         filename = f"orders_{wok}_{year}_{month_num}_{target_channel}.csv"
-        await query.message.reply_document(document=output, filename=filename, caption=f"📊 Data Order {wok} - {month_name} {year} ({target_channel})")
+        await query.message.reply_document(document=output, filename=filename, caption=f"📊 Raw Orders {wok} - {month_name} {year} ({target_channel})")
         await query.delete_message()
         return ConversationHandler.END
 
     elif action == "tl_show":
+        # Existing per-salesperson list with order IDs (unchanged)
         if not filtered:
             await query.edit_message_text(f"Tidak ada data untuk WOK: {wok}, Bulan: {month_name} {year}.")
             return ConversationHandler.END
@@ -1267,51 +1377,27 @@ async def team_leader_option_callback(update: Update, context: ContextTypes.DEFA
         return ConversationHandler.END
 
     elif action == "tl_paket":
+        # Popular paket (unchanged)
         await query.delete_message()
         processing_msg = await query.message.reply_text(f"⏳ Menghitung semua paket COMPLETED ({target_channel} only)...")
 
         paket_records = []
-        for rec in records:
-            rec_wok = rec.get("WOK", "")
-            rec_channel = rec.get("Channel Name", "").strip().upper()
-            rec_tanggal = rec.get("Tanggal Input", "")
-            if rec_wok != wok or rec_channel != target_channel:
-                continue
-            if not rec_tanggal:
-                continue
-            try:
-                dt = None
-                for fmt in ["%d/%m/%Y %H:%M", "%d/%m/%Y", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d"]:
-                    try:
-                        dt = datetime.strptime(rec_tanggal.strip(), fmt)
-                        break
-                    except:
-                        continue
-                if dt and dt.year == year and dt.month == month_num:
-                    paket_records.append(rec)
-            except:
-                continue
-
-        if not paket_records:
-            await processing_msg.edit_text(f"Tidak ada data {target_channel} untuk WOK {wok} pada {month_name} {year}.")
-            return ConversationHandler.END
-
-        total_completed = 0
-        paket_counts = {}
-        for rec in paket_records:
+        for rec in filtered:
             status = (rec.get("Status Order", "") or "").strip().upper()
             if status != "COMPLETED":
                 continue
-            total_completed += 1
             paket = rec.get("Paket", "").strip()
             if not paket:
                 continue
-            paket_counts[paket] = paket_counts.get(paket, 0) + 1
-
-        if total_completed == 0:
+            paket_records.append((paket, rec))
+        if not paket_records:
             await processing_msg.edit_text(f"Tidak ada order COMPLETED untuk {target_channel} di {wok} pada {month_name} {year}.")
             return ConversationHandler.END
 
+        total_completed = len(paket_records)
+        paket_counts = {}
+        for paket, _ in paket_records:
+            paket_counts[paket] = paket_counts.get(paket, 0) + 1
         sorted_paket = sorted(paket_counts.items(), key=lambda x: x[1], reverse=True)
         lines = [f"📦 *SEMUA PAKET COMPLETED – {target_channel} ONLY*",
                  f"📍 WOK: {wok}",
@@ -1322,6 +1408,49 @@ async def team_leader_option_callback(update: Update, context: ContextTypes.DEFA
             lines.append(f"• {pkg}: {cnt} ({pct:.1f}%)")
         lines.append(f"\n📅 Last Update Data: {get_last_order_date()}")
         await processing_msg.edit_text("\n".join(lines), parse_mode="Markdown")
+        return ConversationHandler.END
+
+    elif action == "tl_metrics_csv":
+        # New metrics CSV: export summary per salesperson (or just total for the WOK? Wait, the user requested "another .csv files to download for their metrics conversion". For Team Leader, probably per-salesperson summary with IO, RE, PS, etc.)
+        if not filtered:
+            await query.edit_message_text(f"Tidak ada data untuk WOK: {wok}, Bulan: {month_name} {year}.")
+            return ConversationHandler.END
+
+        # Group by SalesForce
+        sales_metrics = {}
+        for rec in filtered:
+            sf = rec.get("SalesForce", "").strip()
+            if not sf:
+                sf = "Unknown"
+            if sf not in sales_metrics:
+                sales_metrics[sf] = {"io": 0, "re": 0, "ps": 0, "fo": 0}
+            # io: has Tanggal Input
+            if rec.get("Tanggal Input"):
+                sales_metrics[sf]["io"] += 1
+            if rec.get("Tanggal Register"):
+                sales_metrics[sf]["re"] += 1
+            if rec.get("Tanggal Complete"):
+                sales_metrics[sf]["ps"] += 1
+            if rec.get("Status Order", "").upper().strip() == "FALLOUT":
+                sales_metrics[sf]["fo"] += 1
+
+        output = io.StringIO()
+        writer = csv.writer(output)
+        writer.writerow(["SalesForce", "IO", "RE", "PS", "IO/RE%", "IO/PS%", "RE/PS%", "FO", "FO%"])
+        for sf, m in sales_metrics.items():
+            io = m["io"]
+            re = m["re"]
+            ps = m["ps"]
+            fo = m["fo"]
+            io_re = (io / re * 100) if re > 0 else 0
+            io_ps = (io / ps * 100) if ps > 0 else 0
+            re_ps = (re / ps * 100) if ps > 0 else 0
+            fo_pct = (fo / io * 100) if io > 0 else 0
+            writer.writerow([sf, io, re, ps, f"{io_re:.2f}", f"{io_ps:.2f}", f"{re_ps:.2f}", fo, f"{fo_pct:.2f}"])
+        output.seek(0)
+        filename = f"metrics_{wok}_{year}_{month_num}_{target_channel}.csv"
+        await query.message.reply_document(document=output, filename=filename, caption=f"📊 Metrics per Salesperson - {wok} {month_name} {year}")
+        await query.delete_message()
         return ConversationHandler.END
 
     else:
@@ -1364,176 +1493,338 @@ async def summary_month_selected(update: Update, context: ContextTypes.DEFAULT_T
     prev_month = month_num - 1 if month_num > 1 else 12
     prev_year = year if month_num > 1 else year - 1
 
+    # Helper to extract date (year, month, day) from a date string
     def extract_date(date_str):
         if not date_str:
-            return None, None
-        try:
-            if '-' in date_str:
-                parts = date_str.split()[0].split('-')
-                if len(parts) == 3:
-                    return int(parts[0]), int(parts[1])
-            parts = date_str.split()[0].split('/')
-            if len(parts) == 3:
-                return int(parts[2]), int(parts[1])
-        except:
-            pass
-        return None, None
+            return None, None, None
+        date_str = clean_text(date_str)
+        for fmt in ["%d/%m/%Y %H:%M", "%d/%m/%Y", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d"]:
+            try:
+                dt = datetime.strptime(date_str, fmt)
+                return dt.year, dt.month, dt.day
+            except:
+                continue
+        return None, None, None
+
+    # Get today's day number (for MTD)
+    today = datetime.now()
+    current_day = today.day
+
+    # Helper to compute full month and MTD counts for a list of records
+    def compute_metrics_full_and_mtd(recs):
+        # recs is list of records for a given group (e.g., all orders for a WOK in the selected month)
+        # We need: IO (count of non-empty Tanggal Input), RE, PS, FO
+        io = 0
+        re = 0
+        ps = 0
+        fo = 0
+        mtd_io = 0
+        mtd_re = 0
+        mtd_ps = 0
+        for r in recs:
+            # For full month, just count non-empty
+            if r.get("Tanggal Input"):
+                io += 1
+            if r.get("Tanggal Register"):
+                re += 1
+            if r.get("Tanggal Complete"):
+                ps += 1
+            if r.get("Status Order", "").upper().strip() == "FALLOUT":
+                fo += 1
+            # For MTD, we need the day of the Tanggal Input (or other dates?) – we'll use Tanggal Input for MTD IO, etc.
+            tgl_input = r.get("Tanggal Input", "")
+            if tgl_input:
+                _, _, d = extract_date(tgl_input)
+                if d is not None and d <= current_day:
+                    mtd_io += 1
+            tgl_re = r.get("Tanggal Register", "")
+            if tgl_re:
+                _, _, d = extract_date(tgl_re)
+                if d is not None and d <= current_day:
+                    mtd_re += 1
+            tgl_ps = r.get("Tanggal Complete", "")
+            if tgl_ps:
+                _, _, d = extract_date(tgl_ps)
+                if d is not None and d <= current_day:
+                    mtd_ps += 1
+        return io, re, ps, fo, mtd_io, mtd_re, mtd_ps
+
+    # Helper to get counts for a given year/month and optional filter (WOK or channel)
+    def get_counts(y, m, filter_key, filter_value):
+        filtered = []
+        for rec in records:
+            tgl = rec.get("Tanggal Input", "")
+            yr, mo, _ = extract_date(tgl)
+            if yr == y and mo == m:
+                if filter_key == "WOK" and rec.get("WOK", "") != filter_value:
+                    continue
+                if filter_key == "Channel" and rec.get("Channel Name", "") != filter_value:
+                    continue
+                filtered.append(rec)
+        return compute_metrics_full_and_mtd(filtered)
+
+    wok_list = ["MANADO TALAUD", "BOLAANG MONGONDOW", "GORONTALO - PAHUWATO", "BITUNG MINAHASA"]
+    channels = ["B2B2C&OTHERS", "AGENCY", "GRAPARI", "SOBI AFFILIATE", "WEB&APP"]
+
+    # Function to build a message for a summary table
+    def build_summary_table(title, rows, total_io, total_re, total_ps, total_fo, total_mtd_io, total_mtd_re, total_mtd_ps, prev_total_io, prev_total_re, prev_total_ps, prev_mtd_io, prev_mtd_re, prev_mtd_ps):
+        lines = [f"📊 *{title}*", f"📅 {month_name.upper()} {year}", ""]
+        for row in rows:
+            lines.append(f"• *{row['name']}*")
+            lines.append(f"  IO {row['io']} | RE {row['re']} | PS {row['ps']}")
+            io_re = (row['io'] / row['re'] * 100) if row['re'] > 0 else 0
+            io_ps = (row['io'] / row['ps'] * 100) if row['ps'] > 0 else 0
+            re_ps = (row['re'] / row['ps'] * 100) if row['ps'] > 0 else 0
+            lines.append(f"  IO/RE {io_re:.1f}% | IO/PS {io_ps:.1f}% | RE/PS {re_ps:.1f}%")
+            gap_fm_io = row['io'] - row['prev_io']
+            gap_fm_re = row['re'] - row['prev_re']
+            gap_fm_ps = row['ps'] - row['prev_ps']
+            lines.append(f"  GAP FM: IO {gap_fm_io:+d} | RE {gap_fm_re:+d} | PS {gap_fm_ps:+d}")
+            gap_mtd_io = row['mtd_io'] - row['prev_mtd_io']
+            gap_mtd_re = row['mtd_re'] - row['prev_mtd_re']
+            gap_mtd_ps = row['mtd_ps'] - row['prev_mtd_ps']
+            lines.append(f"  GAP MTD: IO {gap_mtd_io:+d} | RE {gap_mtd_re:+d} | PS {gap_mtd_ps:+d}")
+            mom_io = ((row['mtd_io'] - row['prev_mtd_io']) / row['prev_mtd_io'] * 100) if row['prev_mtd_io'] > 0 else 0
+            mom_re = ((row['mtd_re'] - row['prev_mtd_re']) / row['prev_mtd_re'] * 100) if row['prev_mtd_re'] > 0 else 0
+            mom_ps = ((row['mtd_ps'] - row['prev_mtd_ps']) / row['prev_mtd_ps'] * 100) if row['prev_mtd_ps'] > 0 else 0
+            lines.append(f"  MoM: IO {mom_io:+.1f}% | RE {mom_re:+.1f}% | PS {mom_ps:+.1f}%")
+            fo_pct = (row['fo'] / row['io'] * 100) if row['io'] > 0 else 0
+            kontrib = (row['ps'] / total_ps * 100) if total_ps > 0 else 0
+            lines.append(f"  FO {row['fo']} ({fo_pct:.1f}%) | Kontrib {kontrib:.1f}%")
+        # Total row
+        lines.append(f"\n• *TOTAL*")
+        lines.append(f"  IO {total_io} | RE {total_re} | PS {total_ps}")
+        io_re = (total_io / total_re * 100) if total_re > 0 else 0
+        io_ps = (total_io / total_ps * 100) if total_ps > 0 else 0
+        re_ps = (total_re / total_ps * 100) if total_ps > 0 else 0
+        lines.append(f"  IO/RE {io_re:.1f}% | IO/PS {io_ps:.1f}% | RE/PS {re_ps:.1f}%")
+        gap_fm_io_total = total_io - prev_total_io
+        gap_fm_re_total = total_re - prev_total_re
+        gap_fm_ps_total = total_ps - prev_total_ps
+        lines.append(f"  GAP FM: IO {gap_fm_io_total:+d} | RE {gap_fm_re_total:+d} | PS {gap_fm_ps_total:+d}")
+        gap_mtd_io_total = total_mtd_io - prev_mtd_io
+        gap_mtd_re_total = total_mtd_re - prev_mtd_re
+        gap_mtd_ps_total = total_mtd_ps - prev_mtd_ps
+        lines.append(f"  GAP MTD: IO {gap_mtd_io_total:+d} | RE {gap_mtd_re_total:+d} | PS {gap_mtd_ps_total:+d}")
+        mom_io_total = ((total_mtd_io - prev_mtd_io) / prev_mtd_io * 100) if prev_mtd_io > 0 else 0
+        mom_re_total = ((total_mtd_re - prev_mtd_re) / prev_mtd_re * 100) if prev_mtd_re > 0 else 0
+        mom_ps_total = ((total_mtd_ps - prev_mtd_ps) / prev_mtd_ps * 100) if prev_mtd_ps > 0 else 0
+        lines.append(f"  MoM: IO {mom_io_total:+.1f}% | RE {mom_re_total:+.1f}% | PS {mom_ps_total:+.1f}%")
+        fo_pct_total = (total_fo / total_io * 100) if total_io > 0 else 0
+        lines.append(f"  FO {total_fo} ({fo_pct_total:.1f}%) | Kontrib 100.0%")
+        lines.append(f"\n📅 Last Update Data: {get_last_order_date()}")
+        return lines
 
     # ----- 1. per WOK summary -----
-    wok_list = ["MANADO TALAUD", "BOLAANG MONGONDOW", "GORONTALO - PAHUWATO", "BITUNG MINAHASA"]
-    wok_stats = {}
-    total_input = 0
-    total_completed = 0
-    total_fallout = 0
-
-    for rec in records:
-        wok = rec.get("WOK", "")
-        if wok not in wok_list:
-            continue
-        tgl = rec.get("Tanggal Input", "")
-        y, m = extract_date(tgl)
-        if y is None or m is None:
-            continue
-        status = (rec.get("Status Order", "") or "").strip().upper()
-        if y == year and m == month_num:
-            total_input += 1
-            if status == "COMPLETED":
-                total_completed += 1
-            elif status == "FALLOUT":
-                total_fallout += 1
-            if wok not in wok_stats:
-                wok_stats[wok] = {"input": 0, "completed": 0, "fallout": 0, "prev_input": 0}
-            wok_stats[wok]["input"] += 1
-            if status == "COMPLETED":
-                wok_stats[wok]["completed"] += 1
-            elif status == "FALLOUT":
-                wok_stats[wok]["fallout"] += 1
-        if y == prev_year and m == prev_month:
-            if wok not in wok_stats:
-                wok_stats[wok] = {"input": 0, "completed": 0, "fallout": 0, "prev_input": 0}
-            wok_stats[wok]["prev_input"] += 1
-
-    lines1 = [f"📊 *RINGKASAN PER WOK*", f"📅 {month_name.upper()} {year}", ""]
+    wok_rows = []
+    total_io = total_re = total_ps = total_fo = 0
+    total_mtd_io = total_mtd_re = total_mtd_ps = 0
+    prev_total_io = prev_total_re = prev_total_ps = 0
+    prev_mtd_io = prev_mtd_re = prev_mtd_ps = 0
     for wok in wok_list:
-        stats = wok_stats.get(wok, {"input": 0, "completed": 0, "fallout": 0, "prev_input": 0})
-        inp = stats["input"]
-        comp = stats["completed"]
-        flt = stats["fallout"]
-        prev = stats["prev_input"]
-        completion = (comp / inp * 100) if inp > 0 else 0
-        contrib = (inp / total_input * 100) if total_input > 0 else 0
-        mom = ((inp - prev) / prev * 100) if prev > 0 else (100 if inp > 0 else 0)
-        lines1.append(f"• *{wok}*: Input {inp} | Comp {comp} | FO {flt} | IO/PS {completion:.1f}% | Kontrib {contrib:.1f}% | MoM {mom:.1f}%")
-    total_completion = (total_completed / total_input * 100) if total_input > 0 else 0
-    total_prev = sum(stats.get("prev_input", 0) for stats in wok_stats.values())
-    total_mom = ((total_input - total_prev) / total_prev * 100) if total_prev > 0 else (100 if total_input > 0 else 0)
-    lines1.append(f"\n• *TOTAL*: Input {total_input} | Comp {total_completed} | FO {total_fallout} | IO/PS {total_completion:.1f}% | Kontrib 100.0% | MoM {total_mom:.1f}%")
-    lines1.append(f"\n\n📅 Last Update Data: {get_last_order_date()}")
-    await query.message.reply_text("\n".join(lines1), parse_mode="Markdown")
+        io, re, ps, fo, mtd_io, mtd_re, mtd_ps = get_counts(year, month_num, "WOK", wok)
+        prev_io, prev_re, prev_ps, prev_fo, prev_mtd_io, prev_mtd_re, prev_mtd_ps = get_counts(prev_year, prev_month, "WOK", wok)
+        wok_rows.append({
+            "name": wok,
+            "io": io,
+            "re": re,
+            "ps": ps,
+            "fo": fo,
+            "mtd_io": mtd_io,
+            "mtd_re": mtd_re,
+            "mtd_ps": mtd_ps,
+            "prev_io": prev_io,
+            "prev_re": prev_re,
+            "prev_ps": prev_ps,
+            "prev_mtd_io": prev_mtd_io,
+            "prev_mtd_re": prev_mtd_re,
+            "prev_mtd_ps": prev_mtd_ps,
+        })
+        total_io += io
+        total_re += re
+        total_ps += ps
+        total_fo += fo
+        total_mtd_io += mtd_io
+        total_mtd_re += mtd_re
+        total_mtd_ps += mtd_ps
+        prev_total_io += prev_io
+        prev_total_re += prev_re
+        prev_total_ps += prev_ps
+        prev_mtd_io += prev_mtd_io
+        prev_mtd_re += prev_mtd_re
+        prev_mtd_ps += prev_mtd_ps
+
+    lines1 = build_summary_table("RINGKASAN PER WOK", wok_rows,
+                                 total_io, total_re, total_ps, total_fo,
+                                 total_mtd_io, total_mtd_re, total_mtd_ps,
+                                 prev_total_io, prev_total_re, prev_total_ps,
+                                 prev_mtd_io, prev_mtd_re, prev_mtd_ps)
+    # Send in chunks if needed
+    msg = "\n".join(lines1)
+    if len(msg) > 4000:
+        # Split into multiple messages (simple split by line groups)
+        parts = []
+        current = []
+        current_len = 0
+        for line in lines1:
+            if current_len + len(line) + 1 > 4000:
+                parts.append("\n".join(current))
+                current = [line]
+                current_len = len(line)
+            else:
+                current.append(line)
+                current_len += len(line) + 1
+        if current:
+            parts.append("\n".join(current))
+        for part in parts:
+            await query.message.reply_text(part, parse_mode="Markdown")
+    else:
+        await query.message.reply_text(msg, parse_mode="Markdown")
 
     # ----- 2. overall per channel summary -----
-    channels = ["B2B2C&OTHERS", "AGENCY", "GRAPARI", "SOBI AFFILIATE", "WEB&APP"]
-    chan_stats = {}
-    total_chan_input = 0
-    total_chan_completed = 0
-    total_chan_fallout = 0
-
-    for rec in records:
-        channel = rec.get("Channel Name", "")
-        if channel not in channels:
-            continue
-        tgl = rec.get("Tanggal Input", "")
-        y, m = extract_date(tgl)
-        if y is None or m is None:
-            continue
-        status = (rec.get("Status Order", "") or "").strip().upper()
-        if y == year and m == month_num:
-            total_chan_input += 1
-            if status == "COMPLETED":
-                total_chan_completed += 1
-            elif status == "FALLOUT":
-                total_chan_fallout += 1
-            if channel not in chan_stats:
-                chan_stats[channel] = {"input": 0, "completed": 0, "fallout": 0, "prev_input": 0}
-            chan_stats[channel]["input"] += 1
-            if status == "COMPLETED":
-                chan_stats[channel]["completed"] += 1
-            elif status == "FALLOUT":
-                chan_stats[channel]["fallout"] += 1
-        if y == prev_year and m == prev_month:
-            if channel not in chan_stats:
-                chan_stats[channel] = {"input": 0, "completed": 0, "fallout": 0, "prev_input": 0}
-            chan_stats[channel]["prev_input"] += 1
-
-    lines2 = [f"📊 *RINGKASAN PER CHANNEL*", f"📅 {month_name.upper()} {year}", ""]
+    channel_rows = []
+    total_io_chan = total_re_chan = total_ps_chan = total_fo_chan = 0
+    total_mtd_io_chan = total_mtd_re_chan = total_mtd_ps_chan = 0
+    prev_total_io_chan = prev_total_re_chan = prev_total_ps_chan = 0
+    prev_mtd_io_chan = prev_mtd_re_chan = prev_mtd_ps_chan = 0
     for ch in channels:
-        stats = chan_stats.get(ch, {"input": 0, "completed": 0, "fallout": 0, "prev_input": 0})
-        inp = stats["input"]
-        comp = stats["completed"]
-        flt = stats["fallout"]
-        prev = stats["prev_input"]
-        completion = (comp / inp * 100) if inp > 0 else 0
-        contrib = (inp / total_chan_input * 100) if total_chan_input > 0 else 0
-        mom = ((inp - prev) / prev * 100) if prev > 0 else (100 if inp > 0 else 0)
-        lines2.append(f"• *{ch}*: Input {inp} | Comp {comp} | FO {flt} | IO/PS {completion:.1f}% | Kontrib {contrib:.1f}% | MoM {mom:.1f}%")
-    total_chan_completion = (total_chan_completed / total_chan_input * 100) if total_chan_input > 0 else 0
-    total_chan_prev = sum(stats.get("prev_input", 0) for stats in chan_stats.values())
-    total_chan_mom = ((total_chan_input - total_chan_prev) / total_chan_prev * 100) if total_chan_prev > 0 else (100 if total_chan_input > 0 else 0)
-    lines2.append(f"\n• *TOTAL*: Input {total_chan_input} | Comp {total_chan_completed} | FO {total_chan_fallout} | IO/PS {total_chan_completion:.1f}% | Kontrib 100.0% | MoM {total_chan_mom:.1f}%")
-    lines2.append(f"\n\n📅 Last Update Data: {get_last_order_date()}")
-    await query.message.reply_text("\n".join(lines2), parse_mode="Markdown")
+        io, re, ps, fo, mtd_io, mtd_re, mtd_ps = get_counts(year, month_num, "Channel", ch)
+        prev_io, prev_re, prev_ps, prev_fo, prev_mtd_io, prev_mtd_re, prev_mtd_ps = get_counts(prev_year, prev_month, "Channel", ch)
+        channel_rows.append({
+            "name": ch,
+            "io": io,
+            "re": re,
+            "ps": ps,
+            "fo": fo,
+            "mtd_io": mtd_io,
+            "mtd_re": mtd_re,
+            "mtd_ps": mtd_ps,
+            "prev_io": prev_io,
+            "prev_re": prev_re,
+            "prev_ps": prev_ps,
+            "prev_mtd_io": prev_mtd_io,
+            "prev_mtd_re": prev_mtd_re,
+            "prev_mtd_ps": prev_mtd_ps,
+        })
+        total_io_chan += io
+        total_re_chan += re
+        total_ps_chan += ps
+        total_fo_chan += fo
+        total_mtd_io_chan += mtd_io
+        total_mtd_re_chan += mtd_re
+        total_mtd_ps_chan += mtd_ps
+        prev_total_io_chan += prev_io
+        prev_total_re_chan += prev_re
+        prev_total_ps_chan += prev_ps
+        prev_mtd_io_chan += prev_mtd_io
+        prev_mtd_re_chan += prev_mtd_re
+        prev_mtd_ps_chan += prev_mtd_ps
+
+    lines2 = build_summary_table("RINGKASAN PER CHANNEL", channel_rows,
+                                 total_io_chan, total_re_chan, total_ps_chan, total_fo_chan,
+                                 total_mtd_io_chan, total_mtd_re_chan, total_mtd_ps_chan,
+                                 prev_total_io_chan, prev_total_re_chan, prev_total_ps_chan,
+                                 prev_mtd_io_chan, prev_mtd_re_chan, prev_mtd_ps_chan)
+    msg2 = "\n".join(lines2)
+    if len(msg2) > 4000:
+        parts = []
+        current = []
+        current_len = 0
+        for line in lines2:
+            if current_len + len(line) + 1 > 4000:
+                parts.append("\n".join(current))
+                current = [line]
+                current_len = len(line)
+            else:
+                current.append(line)
+                current_len += len(line) + 1
+        if current:
+            parts.append("\n".join(current))
+        for part in parts:
+            await query.message.reply_text(part, parse_mode="Markdown")
+    else:
+        await query.message.reply_text(msg2, parse_mode="Markdown")
 
     # ----- 3. per WOK channel summaries -----
     for wok in wok_list:
-        wok_chan_stats = {ch: {"input": 0, "completed": 0, "fallout": 0, "prev_input": 0} for ch in channels}
-        total_wok_input = 0
-        total_wok_completed = 0
-        total_wok_fallout = 0
-        for rec in records:
-            rec_wok = rec.get("WOK", "")
-            if rec_wok != wok:
-                continue
-            rec_channel = rec.get("Channel Name", "")
-            if rec_channel not in channels:
-                continue
-            tgl = rec.get("Tanggal Input", "")
-            y, m = extract_date(tgl)
-            if y is None or m is None:
-                continue
-            status = (rec.get("Status Order", "") or "").strip().upper()
-            if y == year and m == month_num:
-                total_wok_input += 1
-                if status == "COMPLETED":
-                    total_wok_completed += 1
-                elif status == "FALLOUT":
-                    total_wok_fallout += 1
-                wok_chan_stats[rec_channel]["input"] += 1
-                if status == "COMPLETED":
-                    wok_chan_stats[rec_channel]["completed"] += 1
-                elif status == "FALLOUT":
-                    wok_chan_stats[rec_channel]["fallout"] += 1
-            if y == prev_year and m == prev_month:
-                wok_chan_stats[rec_channel]["prev_input"] += 1
-
-        lines_wok = [f"📊 *RINGKASAN PER CHANNEL UNTUK {wok}*", f"📅 {month_name.upper()} {year}", ""]
+        wok_channel_rows = []
+        total_wok_io = total_wok_re = total_wok_ps = total_wok_fo = 0
+        total_wok_mtd_io = total_wok_mtd_re = total_wok_mtd_ps = 0
+        prev_total_wok_io = prev_total_wok_re = prev_total_wok_ps = 0
+        prev_mtd_wok_io = prev_mtd_wok_re = prev_mtd_wok_ps = 0
         for ch in channels:
-            stats = wok_chan_stats[ch]
-            inp = stats["input"]
-            comp = stats["completed"]
-            flt = stats["fallout"]
-            prev = stats["prev_input"]
-            completion = (comp / inp * 100) if inp > 0 else 0
-            contrib = (inp / total_wok_input * 100) if total_wok_input > 0 else 0
-            mom = ((inp - prev) / prev * 100) if prev > 0 else (100 if inp > 0 else 0)
-            lines_wok.append(f"• *{ch}*: Input {inp} | Comp {comp} | FO {flt} | IO/PS {completion:.1f}% | Kontrib {contrib:.1f}% | MoM {mom:.1f}%")
-        total_wok_completion = (total_wok_completed / total_wok_input * 100) if total_wok_input > 0 else 0
-        total_wok_prev = sum(wok_chan_stats[ch]["prev_input"] for ch in channels)
-        total_wok_mom = ((total_wok_input - total_wok_prev) / total_wok_prev * 100) if total_wok_prev > 0 else (100 if total_wok_input > 0 else 0)
-        lines_wok.append(f"\n• *TOTAL*: Input {total_wok_input} | Comp {total_wok_completed} | FO {total_wok_fallout} | IO/PS {total_wok_completion:.1f}% | Kontrib 100.0% | MoM {total_wok_mom:.1f}%")
-        lines_wok.append(f"\n\n📅 Last Update Data: {get_last_order_date()}")
-        await query.message.reply_text("\n".join(lines_wok), parse_mode="Markdown")
+            # Filter records for this WOK and channel
+            filtered = []
+            for rec in records:
+                tgl = rec.get("Tanggal Input", "")
+                yr, mo, _ = extract_date(tgl)
+                if yr == year and mo == month_num and rec.get("WOK", "") == wok and rec.get("Channel Name", "") == ch:
+                    filtered.append(rec)
+            io, re, ps, fo, mtd_io, mtd_re, mtd_ps = compute_metrics_full_and_mtd(filtered)
+            # Previous month
+            filtered_prev = []
+            for rec in records:
+                tgl = rec.get("Tanggal Input", "")
+                yr, mo, _ = extract_date(tgl)
+                if yr == prev_year and mo == prev_month and rec.get("WOK", "") == wok and rec.get("Channel Name", "") == ch:
+                    filtered_prev.append(rec)
+            prev_io, prev_re, prev_ps, prev_fo, prev_mtd_io, prev_mtd_re, prev_mtd_ps = compute_metrics_full_and_mtd(filtered_prev)
+            wok_channel_rows.append({
+                "name": ch,
+                "io": io,
+                "re": re,
+                "ps": ps,
+                "fo": fo,
+                "mtd_io": mtd_io,
+                "mtd_re": mtd_re,
+                "mtd_ps": mtd_ps,
+                "prev_io": prev_io,
+                "prev_re": prev_re,
+                "prev_ps": prev_ps,
+                "prev_mtd_io": prev_mtd_io,
+                "prev_mtd_re": prev_mtd_re,
+                "prev_mtd_ps": prev_mtd_ps,
+            })
+            total_wok_io += io
+            total_wok_re += re
+            total_wok_ps += ps
+            total_wok_fo += fo
+            total_wok_mtd_io += mtd_io
+            total_wok_mtd_re += mtd_re
+            total_wok_mtd_ps += mtd_ps
+            prev_total_wok_io += prev_io
+            prev_total_wok_re += prev_re
+            prev_total_wok_ps += prev_ps
+            prev_mtd_wok_io += prev_mtd_io
+            prev_mtd_wok_re += prev_mtd_re
+            prev_mtd_wok_ps += prev_mtd_ps
 
-    # --- Popular Paket Summary – ALL COMPLETED packages (no limit) ---
+        lines_wok = build_summary_table(f"RINGKASAN PER CHANNEL UNTUK {wok}", wok_channel_rows,
+                                        total_wok_io, total_wok_re, total_wok_ps, total_wok_fo,
+                                        total_wok_mtd_io, total_wok_mtd_re, total_wok_mtd_ps,
+                                        prev_total_wok_io, prev_total_wok_re, prev_total_wok_ps,
+                                        prev_mtd_wok_io, prev_mtd_wok_re, prev_mtd_wok_ps)
+        msg_wok = "\n".join(lines_wok)
+        if len(msg_wok) > 4000:
+            parts = []
+            current = []
+            current_len = 0
+            for line in lines_wok:
+                if current_len + len(line) + 1 > 4000:
+                    parts.append("\n".join(current))
+                    current = [line]
+                    current_len = len(line)
+                else:
+                    current.append(line)
+                    current_len += len(line) + 1
+            if current:
+                parts.append("\n".join(current))
+            for part in parts:
+                await query.message.reply_text(part, parse_mode="Markdown")
+        else:
+            await query.message.reply_text(msg_wok, parse_mode="Markdown")
+
+    # --- Popular Paket Summary – ALL COMPLETED packages (no limit) – unchanged ---
     await query.message.reply_text("📦 Menghitung semua paket dengan status COMPLETED...")
 
     def clean_field(s):
@@ -1704,12 +1995,12 @@ def main():
             DETAIL_WOK: [CallbackQueryHandler(detail_wok_selected, pattern="^wok_")],
             SALES_YEAR: [CallbackQueryHandler(sales_year_selected, pattern="^year_")],
             SALES_MONTH: [CallbackQueryHandler(sales_month_selected, pattern="^month_")],
-            TEAM_LEADER_OPTION: [CallbackQueryHandler(team_leader_option_callback, pattern="^(tl_csv|tl_show|tl_paket)$")],
+            TEAM_LEADER_OPTION: [CallbackQueryHandler(team_leader_option_callback, pattern="^(tl_csv|tl_show|tl_paket|tl_metrics_csv)$")],
             SUMMARY_YEAR: [CallbackQueryHandler(summary_year_selected, pattern="^sumyear_")],
             SUMMARY_MONTH: [CallbackQueryHandler(summary_month_selected, pattern="^summonth_")],
             GRAPARI_STO_YEAR: [CallbackQueryHandler(grapari_sto_year_selected, pattern="^stoyear_")],
             GRAPARI_STO_MONTH: [CallbackQueryHandler(grapari_sto_month_selected, pattern="^stomonth_")],
-            GRAPARI_STO_OPTION: [CallbackQueryHandler(grapari_sto_option_callback, pattern="^(sto_summary|sto_csv)$")],
+            GRAPARI_STO_OPTION: [CallbackQueryHandler(grapari_sto_option_callback, pattern="^(sto_summary|sto_csv|sto_metrics_csv)$")],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
         allow_reentry=True,
