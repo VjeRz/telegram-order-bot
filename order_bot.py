@@ -58,7 +58,7 @@ REPORT_OPTION = 40
 GRAPARI_STO_YEAR = 50
 GRAPARI_STO_MONTH = 51
 GRAPARI_STO_OPTION = 52
-TEAM_LEADER_METRICS_CSV = 53   # new state for metrics CSV
+TEAM_LEADER_METRICS_CSV = 53
 
 ALL_STATUSES = [
     "PENDING_CUSTOMER_VERIFICATION", "PROVISION_START", "TECH_ASSIGNED",
@@ -937,7 +937,6 @@ async def grapari_sto_option_callback(update: Update, context: ContextTypes.DEFA
 
         output = io.StringIO()
         writer = csv.writer(output)
-        # Get column names from first record (keys of transformed dict)
         if csv_records:
             headers = list(csv_records[0].keys())
             writer.writerow(headers)
@@ -951,7 +950,6 @@ async def grapari_sto_option_callback(update: Update, context: ContextTypes.DEFA
 
     elif action == "sto_metrics_csv":
         # Export summary metrics per STO (and total row)
-        # Get all unique STOs from GRAPARI channel for the selected month
         sto_records = filter_records(records, year, month_num, channel="GRAPARI")
         if not sto_records:
             await query.edit_message_text(f"Tidak ada data GRAPARI untuk {month_name} {year}.")
@@ -967,7 +965,6 @@ async def grapari_sto_option_callback(update: Update, context: ContextTypes.DEFA
                 sto_groups[sto] = []
             sto_groups[sto].append(rec)
 
-        # Compute metrics for each STO and total
         rows = []
         for sto, group in sto_groups.items():
             io, re, ps, fo = compute_metrics(group)
@@ -976,32 +973,31 @@ async def grapari_sto_option_callback(update: Update, context: ContextTypes.DEFA
                 "IO": io,
                 "RE": re,
                 "PS": ps,
-                "IO/RE": (io / re * 100) if re > 0 else 0,
-                "IO/PS": (io / ps * 100) if ps > 0 else 0,
-                "RE/PS": (re / ps * 100) if ps > 0 else 0,
+                "RE/IO": (re / io * 100) if io > 0 else 0,
+                "PS/IO": (ps / io * 100) if io > 0 else 0,
+                "PS/RE": (ps / re * 100) if re > 0 else 0,
                 "FO": fo,
                 "FO%": (fo / io * 100) if io > 0 else 0,
             })
-        # Total
         total_io, total_re, total_ps, total_fo = compute_metrics(sto_records)
         rows.append({
             "STO": "TOTAL",
             "IO": total_io,
             "RE": total_re,
             "PS": total_ps,
-            "IO/RE": (total_io / total_re * 100) if total_re > 0 else 0,
-            "IO/PS": (total_io / total_ps * 100) if total_ps > 0 else 0,
-            "RE/PS": (total_re / total_ps * 100) if total_ps > 0 else 0,
+            "RE/IO": (total_re / total_io * 100) if total_io > 0 else 0,
+            "PS/IO": (total_ps / total_io * 100) if total_io > 0 else 0,
+            "PS/RE": (total_ps / total_re * 100) if total_re > 0 else 0,
             "FO": total_fo,
             "FO%": (total_fo / total_io * 100) if total_io > 0 else 0,
         })
 
         output = io.StringIO()
         writer = csv.writer(output)
-        writer.writerow(["STO", "IO", "RE", "PS", "IO/RE%", "IO/PS%", "RE/PS%", "FO", "FO%"])
+        writer.writerow(["STO", "IO", "RE", "PS", "RE/IO%", "PS/IO%", "PS/RE%", "FO", "FO%"])
         for row in rows:
             writer.writerow([row["STO"], row["IO"], row["RE"], row["PS"],
-                             f"{row['IO/RE']:.2f}", f"{row['IO/PS']:.2f}", f"{row['RE/PS']:.2f}",
+                             f"{row['RE/IO']:.2f}", f"{row['PS/IO']:.2f}", f"{row['PS/RE']:.2f}",
                              row["FO"], f"{row['FO%']:.2f}"])
         output.seek(0)
         filename = f"grapari_sto_{year}_{month_num}_metrics.csv"
@@ -1010,13 +1006,11 @@ async def grapari_sto_option_callback(update: Update, context: ContextTypes.DEFA
         return ConversationHandler.END
 
     else:  # sto_summary (original text summary)
-        # Compute metrics per STO and total
         sto_records = filter_records(records, year, month_num, channel="GRAPARI")
         if not sto_records:
             await query.edit_message_text(f"Tidak ada data GRAPARI untuk {month_name} {year}.")
             return ConversationHandler.END
 
-        # Group by STO
         sto_groups = {}
         for rec in sto_records:
             sto = rec.get("STO", "Unknown").strip()
@@ -1026,7 +1020,6 @@ async def grapari_sto_option_callback(update: Update, context: ContextTypes.DEFA
                 sto_groups[sto] = []
             sto_groups[sto].append(rec)
 
-        # Sort STOs alphabetically or by IO? We'll sort by IO descending.
         sorted_stos = sorted(sto_groups.items(), key=lambda x: len(x[1]), reverse=True)
 
         lines = [f"📊 *RINGKASAN PER STO (GRAPARI)*", f"📅 {month_name.upper()} {year}", ""]
@@ -1037,21 +1030,22 @@ async def grapari_sto_option_callback(update: Update, context: ContextTypes.DEFA
             total_re += re
             total_ps += ps
             total_fo += fo
-            io_re = (io / re * 100) if re > 0 else 0
-            io_ps = (io / ps * 100) if ps > 0 else 0
-            re_ps = (re / ps * 100) if ps > 0 else 0
+            re_io = (re / io * 100) if io > 0 else 0
+            ps_io = (ps / io * 100) if io > 0 else 0
+            ps_re = (ps / re * 100) if re > 0 else 0
             fo_pct = (fo / io * 100) if io > 0 else 0
-            lines.append(f"• *{sto}*: IO {io} | RE {re} | PS {ps}")
-            lines.append(f"  IO/RE {io_re:.1f}% | IO/PS {io_ps:.1f}% | RE/PS {re_ps:.1f}%")
+            lines.append(f"• *{sto}*")
+            lines.append(f"  IO {io} | RE {re} | PS {ps}")
+            lines.append(f"  RE/IO {re_io:.1f}% | PS/IO {ps_io:.1f}% | PS/RE {ps_re:.1f}%")
             lines.append(f"  FO {fo} ({fo_pct:.1f}%)")
-        # Total line
         if total_io > 0:
-            total_io_re = (total_io / total_re * 100) if total_re > 0 else 0
-            total_io_ps = (total_io / total_ps * 100) if total_ps > 0 else 0
-            total_re_ps = (total_re / total_ps * 100) if total_ps > 0 else 0
+            total_re_io = (total_re / total_io * 100) if total_io > 0 else 0
+            total_ps_io = (total_ps / total_io * 100) if total_io > 0 else 0
+            total_ps_re = (total_ps / total_re * 100) if total_re > 0 else 0
             total_fo_pct = (total_fo / total_io * 100) if total_io > 0 else 0
-            lines.append(f"\n• *TOTAL*: IO {total_io} | RE {total_re} | PS {total_ps}")
-            lines.append(f"  IO/RE {total_io_re:.1f}% | IO/PS {total_io_ps:.1f}% | RE/PS {total_re_ps:.1f}%")
+            lines.append(f"\n• *TOTAL*")
+            lines.append(f"  IO {total_io} | RE {total_re} | PS {total_ps}")
+            lines.append(f"  RE/IO {total_re_io:.1f}% | PS/IO {total_ps_io:.1f}% | PS/RE {total_ps_re:.1f}%")
             lines.append(f"  FO {total_fo} ({total_fo_pct:.1f}%)")
         lines.append(f"\n📅 Last Update Data: {get_last_order_date()}")
         await query.edit_message_text("\n".join(lines), parse_mode="Markdown")
@@ -1278,7 +1272,7 @@ async def team_leader_option_callback(update: Update, context: ContextTypes.DEFA
     # Helper to extract date (for MTD calculations later, but not needed for raw CSV/list)
     def extract_date(date_str):
         if not date_str:
-            return None, None
+            return None, None, None
         date_str = clean_text(date_str)
         for fmt in ["%d/%m/%Y %H:%M", "%d/%m/%Y", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d"]:
             try:
@@ -1411,7 +1405,7 @@ async def team_leader_option_callback(update: Update, context: ContextTypes.DEFA
         return ConversationHandler.END
 
     elif action == "tl_metrics_csv":
-        # New metrics CSV: export summary per salesperson (or just total for the WOK? Wait, the user requested "another .csv files to download for their metrics conversion". For Team Leader, probably per-salesperson summary with IO, RE, PS, etc.)
+        # New metrics CSV: export summary per salesperson (IO, RE, PS, ratios, FO)
         if not filtered:
             await query.edit_message_text(f"Tidak ada data untuk WOK: {wok}, Bulan: {month_name} {year}.")
             return ConversationHandler.END
@@ -1424,7 +1418,6 @@ async def team_leader_option_callback(update: Update, context: ContextTypes.DEFA
                 sf = "Unknown"
             if sf not in sales_metrics:
                 sales_metrics[sf] = {"io": 0, "re": 0, "ps": 0, "fo": 0}
-            # io: has Tanggal Input
             if rec.get("Tanggal Input"):
                 sales_metrics[sf]["io"] += 1
             if rec.get("Tanggal Register"):
@@ -1436,17 +1429,17 @@ async def team_leader_option_callback(update: Update, context: ContextTypes.DEFA
 
         output = io.StringIO()
         writer = csv.writer(output)
-        writer.writerow(["SalesForce", "IO", "RE", "PS", "IO/RE%", "IO/PS%", "RE/PS%", "FO", "FO%"])
+        writer.writerow(["SalesForce", "IO", "RE", "PS", "RE/IO%", "PS/IO%", "PS/RE%", "FO", "FO%"])
         for sf, m in sales_metrics.items():
             io = m["io"]
             re = m["re"]
             ps = m["ps"]
             fo = m["fo"]
-            io_re = (io / re * 100) if re > 0 else 0
-            io_ps = (io / ps * 100) if ps > 0 else 0
-            re_ps = (re / ps * 100) if ps > 0 else 0
+            re_io = (re / io * 100) if io > 0 else 0
+            ps_io = (ps / io * 100) if io > 0 else 0
+            ps_re = (ps / re * 100) if re > 0 else 0
             fo_pct = (fo / io * 100) if io > 0 else 0
-            writer.writerow([sf, io, re, ps, f"{io_re:.2f}", f"{io_ps:.2f}", f"{re_ps:.2f}", fo, f"{fo_pct:.2f}"])
+            writer.writerow([sf, io, re, ps, f"{re_io:.2f}", f"{ps_io:.2f}", f"{ps_re:.2f}", fo, f"{fo_pct:.2f}"])
         output.seek(0)
         filename = f"metrics_{wok}_{year}_{month_num}_{target_channel}.csv"
         await query.message.reply_document(document=output, filename=filename, caption=f"📊 Metrics per Salesperson - {wok} {month_name} {year}")
@@ -1512,8 +1505,6 @@ async def summary_month_selected(update: Update, context: ContextTypes.DEFAULT_T
 
     # Helper to compute full month and MTD counts for a list of records
     def compute_metrics_full_and_mtd(recs):
-        # recs is list of records for a given group (e.g., all orders for a WOK in the selected month)
-        # We need: IO (count of non-empty Tanggal Input), RE, PS, FO
         io = 0
         re = 0
         ps = 0
@@ -1522,7 +1513,6 @@ async def summary_month_selected(update: Update, context: ContextTypes.DEFAULT_T
         mtd_re = 0
         mtd_ps = 0
         for r in recs:
-            # For full month, just count non-empty
             if r.get("Tanggal Input"):
                 io += 1
             if r.get("Tanggal Register"):
@@ -1531,7 +1521,7 @@ async def summary_month_selected(update: Update, context: ContextTypes.DEFAULT_T
                 ps += 1
             if r.get("Status Order", "").upper().strip() == "FALLOUT":
                 fo += 1
-            # For MTD, we need the day of the Tanggal Input (or other dates?) – we'll use Tanggal Input for MTD IO, etc.
+            # MTD based on Tanggal Input (io_ts)
             tgl_input = r.get("Tanggal Input", "")
             if tgl_input:
                 _, _, d = extract_date(tgl_input)
@@ -1566,16 +1556,17 @@ async def summary_month_selected(update: Update, context: ContextTypes.DEFAULT_T
     wok_list = ["MANADO TALAUD", "BOLAANG MONGONDOW", "GORONTALO - PAHUWATO", "BITUNG MINAHASA"]
     channels = ["B2B2C&OTHERS", "AGENCY", "GRAPARI", "SOBI AFFILIATE", "WEB&APP"]
 
-    # Function to build a message for a summary table
+    # Function to build a message for a summary table (with corrected ratios)
     def build_summary_table(title, rows, total_io, total_re, total_ps, total_fo, total_mtd_io, total_mtd_re, total_mtd_ps, prev_total_io, prev_total_re, prev_total_ps, prev_mtd_io, prev_mtd_re, prev_mtd_ps):
         lines = [f"📊 *{title}*", f"📅 {month_name.upper()} {year}", ""]
         for row in rows:
             lines.append(f"• *{row['name']}*")
             lines.append(f"  IO {row['io']} | RE {row['re']} | PS {row['ps']}")
-            io_re = (row['io'] / row['re'] * 100) if row['re'] > 0 else 0
-            io_ps = (row['io'] / row['ps'] * 100) if row['ps'] > 0 else 0
-            re_ps = (row['re'] / row['ps'] * 100) if row['ps'] > 0 else 0
-            lines.append(f"  IO/RE {io_re:.1f}% | IO/PS {io_ps:.1f}% | RE/PS {re_ps:.1f}%")
+            # Corrected ratios: RE/IO, PS/IO, PS/RE
+            re_io = (row['re'] / row['io'] * 100) if row['io'] > 0 else 0
+            ps_io = (row['ps'] / row['io'] * 100) if row['io'] > 0 else 0
+            ps_re = (row['ps'] / row['re'] * 100) if row['re'] > 0 else 0
+            lines.append(f"  RE/IO {re_io:.1f}% | PS/IO {ps_io:.1f}% | PS/RE {ps_re:.1f}%")
             gap_fm_io = row['io'] - row['prev_io']
             gap_fm_re = row['re'] - row['prev_re']
             gap_fm_ps = row['ps'] - row['prev_ps']
@@ -1594,10 +1585,10 @@ async def summary_month_selected(update: Update, context: ContextTypes.DEFAULT_T
         # Total row
         lines.append(f"\n• *TOTAL*")
         lines.append(f"  IO {total_io} | RE {total_re} | PS {total_ps}")
-        io_re = (total_io / total_re * 100) if total_re > 0 else 0
-        io_ps = (total_io / total_ps * 100) if total_ps > 0 else 0
-        re_ps = (total_re / total_ps * 100) if total_ps > 0 else 0
-        lines.append(f"  IO/RE {io_re:.1f}% | IO/PS {io_ps:.1f}% | RE/PS {re_ps:.1f}%")
+        total_re_io = (total_re / total_io * 100) if total_io > 0 else 0
+        total_ps_io = (total_ps / total_io * 100) if total_io > 0 else 0
+        total_ps_re = (total_ps / total_re * 100) if total_re > 0 else 0
+        lines.append(f"  RE/IO {total_re_io:.1f}% | PS/IO {total_ps_io:.1f}% | PS/RE {total_ps_re:.1f}%")
         gap_fm_io_total = total_io - prev_total_io
         gap_fm_re_total = total_re - prev_total_re
         gap_fm_ps_total = total_ps - prev_total_ps
@@ -1659,10 +1650,8 @@ async def summary_month_selected(update: Update, context: ContextTypes.DEFAULT_T
                                  total_mtd_io, total_mtd_re, total_mtd_ps,
                                  prev_total_io, prev_total_re, prev_total_ps,
                                  prev_mtd_io, prev_mtd_re, prev_mtd_ps)
-    # Send in chunks if needed
     msg = "\n".join(lines1)
     if len(msg) > 4000:
-        # Split into multiple messages (simple split by line groups)
         parts = []
         current = []
         current_len = 0
@@ -1824,7 +1813,7 @@ async def summary_month_selected(update: Update, context: ContextTypes.DEFAULT_T
         else:
             await query.message.reply_text(msg_wok, parse_mode="Markdown")
 
-    # --- Popular Paket Summary – ALL COMPLETED packages (no limit) – unchanged ---
+    # --- Popular Paket Summary – ALL COMPLETED packages (no limit) – FIXED ---
     await query.message.reply_text("📦 Menghitung semua paket dengan status COMPLETED...")
 
     def clean_field(s):
@@ -1843,6 +1832,7 @@ async def summary_month_selected(update: Update, context: ContextTypes.DEFAULT_T
                 return dt.year, dt.month
             except ValueError:
                 continue
+        # fallback: try to split and guess
         try:
             parts = date_str.split()
             date_part = parts[0]
@@ -1884,6 +1874,9 @@ async def summary_month_selected(update: Update, context: ContextTypes.DEFAULT_T
 
     global_total = len(global_completed_records)
     logger.info(f"Global completed orders for {month_name} {year}: {global_total}")
+    # Debug: log first few paket values
+    sample_pakets = [clean_field(rec.get("Paket", "")) for rec in global_completed_records[:10]]
+    logger.info(f"Sample pakets in global: {sample_pakets}")
 
     global_pakets = get_all_paket_with_pct(global_completed_records, global_total)
     if global_pakets:
