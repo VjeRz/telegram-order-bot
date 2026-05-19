@@ -706,6 +706,7 @@ async def receive_single_order(update: Update, context: ContextTypes.DEFAULT_TYP
         f"🪪 WOK: {data['wok']}\n"
         f"🆔 Service ID: {data['service_id']}\n"
         f"📦 Paket: {data['paket']}\n"
+        f"💰 Harga Paket: {data['price_package']}\n"
         f"⚙️ Status Order: {data['order_status']}\n"
         f"📅 Tgl PS/Complete: {data['tanggal_complete']}\n"
         f"📢 Nama Channel: {data['channel']}\n"
@@ -716,7 +717,8 @@ async def receive_single_order(update: Update, context: ContextTypes.DEFAULT_TYP
         f"📅 Tgl Input Order: {data['tanggal_input']}\n"
         f"📝 Ket WO: {data['ket_wo']}\n"
         f"🧠 Sub Error Code: {data['sub_error']}\n"
-        f"👨🏼‍🔧 Technician Notes: {data['technician_notes']}"
+        f"👨🏼‍🔧 Technician Notes: {data['technician_notes']}\n"
+        f"💸 Biaya PSB: {data['fee_psb']}"
     )
     await update.message.reply_text(reply)
     return ConversationHandler.END
@@ -761,6 +763,7 @@ async def process_bulk_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
             f"🪪 WOK: {data['wok']}\n"
             f"🆔 Service ID: {data['service_id']}\n"
             f"📦 Paket: {data['paket']}\n"
+            f"💰 Harga Paket: {data['price_package']}\n"
             f"⚙️ Status Order: {data['order_status']}\n"
             f"📅 Tgl PS/Complete: {data['tanggal_complete']}\n"
             f"📢 Nama Channel: {data['channel']}\n"
@@ -771,7 +774,8 @@ async def process_bulk_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
             f"📅 Tgl Input Order: {data['tanggal_input']}\n"
             f"📝 Ket WO: {data['ket_wo']}\n"
             f"🧠 Sub Error Code: {data['sub_error']}\n"
-            f"👨🏼‍🔧 Technician Notes: {data['technician_notes']}"
+            f"👨🏼‍🔧 Technician Notes: {data['technician_notes']}\n"
+            f"💸 Biaya PSB: {data['fee_psb']}"
         )
         await update.message.reply_text(reply)
     if not_found:
@@ -898,20 +902,20 @@ async def grapari_sto_option_callback(update: Update, context: ContextTypes.DEFA
 
     # Helper to compute IO, RE, PS, and FO counts for a list of records
     def compute_metrics(recs):
-        io = 0
-        re = 0
-        ps = 0
+        inp = 0
+        reg = 0
+        proc = 0
         fo = 0
         for r in recs:
             if r.get("Tanggal Input"):
-                io += 1
+                inp += 1
             if r.get("Tanggal Register"):
-                re += 1
+                reg += 1
             if r.get("Tanggal Complete"):
-                ps += 1
+                proc += 1
             if r.get("Status Order", "").upper().strip() == "FALLOUT":
                 fo += 1
-        return io, re, ps, fo
+        return inp, reg, proc, fo
 
     # Filter records for a given year, month, and (optional) channel and STO
     def filter_records(recs, y, m, channel=None, sto=None):
@@ -927,7 +931,6 @@ async def grapari_sto_option_callback(update: Update, context: ContextTypes.DEFA
                 filtered.append(r)
         return filtered
 
-    # For summary, we need aggregated data per group (STO or overall)
     if action == "sto_csv":
         # Export raw orders (all columns) for GRAPARI channel
         csv_records = filter_records(records, year, month_num, channel="GRAPARI")
@@ -967,29 +970,29 @@ async def grapari_sto_option_callback(update: Update, context: ContextTypes.DEFA
 
         rows = []
         for sto, group in sto_groups.items():
-            io, re, ps, fo = compute_metrics(group)
+            inp, reg, proc, fo = compute_metrics(group)
             rows.append({
                 "STO": sto,
-                "IO": io,
-                "RE": re,
-                "PS": ps,
-                "RE/IO": (re / io * 100) if io > 0 else 0,
-                "PS/IO": (ps / io * 100) if io > 0 else 0,
-                "PS/RE": (ps / re * 100) if re > 0 else 0,
+                "IO": inp,
+                "RE": reg,
+                "PS": proc,
+                "RE/IO": (reg / inp * 100) if inp > 0 else 0,
+                "PS/IO": (proc / inp * 100) if inp > 0 else 0,
+                "PS/RE": (proc / reg * 100) if reg > 0 else 0,
                 "FO": fo,
-                "FO%": (fo / io * 100) if io > 0 else 0,
+                "FO%": (fo / inp * 100) if inp > 0 else 0,
             })
-        total_io, total_re, total_ps, total_fo = compute_metrics(sto_records)
+        total_inp, total_reg, total_proc, total_fo = compute_metrics(sto_records)
         rows.append({
             "STO": "TOTAL",
-            "IO": total_io,
-            "RE": total_re,
-            "PS": total_ps,
-            "RE/IO": (total_re / total_io * 100) if total_io > 0 else 0,
-            "PS/IO": (total_ps / total_io * 100) if total_io > 0 else 0,
-            "PS/RE": (total_ps / total_re * 100) if total_re > 0 else 0,
+            "IO": total_inp,
+            "RE": total_reg,
+            "PS": total_proc,
+            "RE/IO": (total_reg / total_inp * 100) if total_inp > 0 else 0,
+            "PS/IO": (total_proc / total_inp * 100) if total_inp > 0 else 0,
+            "PS/RE": (total_proc / total_reg * 100) if total_reg > 0 else 0,
             "FO": total_fo,
-            "FO%": (total_fo / total_io * 100) if total_io > 0 else 0,
+            "FO%": (total_fo / total_inp * 100) if total_inp > 0 else 0,
         })
 
         output = io.StringIO()
@@ -1023,28 +1026,28 @@ async def grapari_sto_option_callback(update: Update, context: ContextTypes.DEFA
         sorted_stos = sorted(sto_groups.items(), key=lambda x: len(x[1]), reverse=True)
 
         lines = [f"📊 *RINGKASAN PER STO (GRAPARI)*", f"📅 {month_name.upper()} {year}", ""]
-        total_io, total_re, total_ps, total_fo = 0, 0, 0, 0
+        total_inp, total_reg, total_proc, total_fo = 0, 0, 0, 0
         for sto, group in sorted_stos:
-            io, re, ps, fo = compute_metrics(group)
-            total_io += io
-            total_re += re
-            total_ps += ps
+            inp, reg, proc, fo = compute_metrics(group)
+            total_inp += inp
+            total_reg += reg
+            total_proc += proc
             total_fo += fo
-            re_io = (re / io * 100) if io > 0 else 0
-            ps_io = (ps / io * 100) if io > 0 else 0
-            ps_re = (ps / re * 100) if re > 0 else 0
-            fo_pct = (fo / io * 100) if io > 0 else 0
+            re_io = (reg / inp * 100) if inp > 0 else 0
+            ps_io = (proc / inp * 100) if inp > 0 else 0
+            ps_re = (proc / reg * 100) if reg > 0 else 0
+            fo_pct = (fo / inp * 100) if inp > 0 else 0
             lines.append(f"• *{sto}*")
-            lines.append(f"  IO {io} | RE {re} | PS {ps}")
+            lines.append(f"  IO {inp} | RE {reg} | PS {proc}")
             lines.append(f"  RE/IO {re_io:.1f}% | PS/IO {ps_io:.1f}% | PS/RE {ps_re:.1f}%")
             lines.append(f"  FO {fo} ({fo_pct:.1f}%)")
-        if total_io > 0:
-            total_re_io = (total_re / total_io * 100) if total_io > 0 else 0
-            total_ps_io = (total_ps / total_io * 100) if total_io > 0 else 0
-            total_ps_re = (total_ps / total_re * 100) if total_re > 0 else 0
-            total_fo_pct = (total_fo / total_io * 100) if total_io > 0 else 0
+        if total_inp > 0:
+            total_re_io = (total_reg / total_inp * 100) if total_inp > 0 else 0
+            total_ps_io = (total_proc / total_inp * 100) if total_inp > 0 else 0
+            total_ps_re = (total_proc / total_reg * 100) if total_reg > 0 else 0
+            total_fo_pct = (total_fo / total_inp * 100) if total_inp > 0 else 0
             lines.append(f"\n• *TOTAL*")
-            lines.append(f"  IO {total_io} | RE {total_re} | PS {total_ps}")
+            lines.append(f"  IO {total_inp} | RE {total_reg} | PS {total_proc}")
             lines.append(f"  RE/IO {total_re_io:.1f}% | PS/IO {total_ps_io:.1f}% | PS/RE {total_ps_re:.1f}%")
             lines.append(f"  FO {total_fo} ({total_fo_pct:.1f}%)")
         lines.append(f"\n📅 Last Update Data: {get_last_order_date()}")
@@ -1209,7 +1212,7 @@ async def sales_month_selected(update: Update, context: ContextTypes.DEFAULT_TYP
         await processing_msg.edit_text("\n".join(lines))
         return ConversationHandler.END
 
-    # Team Leader (Agency or Grapari) – show three options (CSV raw, list, popular paket, and new metrics CSV)
+    # Team Leader (Agency or Grapari) – show options (CSV raw, list, popular paket, metrics CSV)
     if subrole == "Team Leader":
         channel = "AGENCY"
     else:
@@ -1269,7 +1272,6 @@ async def team_leader_option_callback(update: Update, context: ContextTypes.DEFA
         except:
             continue
 
-    # Helper to extract date (for MTD calculations later, but not needed for raw CSV/list)
     def extract_date(date_str):
         if not date_str:
             return None, None, None
@@ -1405,12 +1407,11 @@ async def team_leader_option_callback(update: Update, context: ContextTypes.DEFA
         return ConversationHandler.END
 
     elif action == "tl_metrics_csv":
-        # New metrics CSV: export summary per salesperson (IO, RE, PS, ratios, FO)
+        # New metrics CSV: export summary per salesperson
         if not filtered:
             await query.edit_message_text(f"Tidak ada data untuk WOK: {wok}, Bulan: {month_name} {year}.")
             return ConversationHandler.END
 
-        # Group by SalesForce
         sales_metrics = {}
         for rec in filtered:
             sf = rec.get("SalesForce", "").strip()
@@ -1505,39 +1506,39 @@ async def summary_month_selected(update: Update, context: ContextTypes.DEFAULT_T
 
     # Helper to compute full month and MTD counts for a list of records
     def compute_metrics_full_and_mtd(recs):
-        io = 0
-        re = 0
-        ps = 0
+        inp = 0
+        reg = 0
+        proc = 0
         fo = 0
-        mtd_io = 0
-        mtd_re = 0
-        mtd_ps = 0
+        mtd_inp = 0
+        mtd_reg = 0
+        mtd_proc = 0
         for r in recs:
             if r.get("Tanggal Input"):
-                io += 1
+                inp += 1
             if r.get("Tanggal Register"):
-                re += 1
+                reg += 1
             if r.get("Tanggal Complete"):
-                ps += 1
+                proc += 1
             if r.get("Status Order", "").upper().strip() == "FALLOUT":
                 fo += 1
-            # MTD based on Tanggal Input (io_ts)
+            # MTD based on Tanggal Input
             tgl_input = r.get("Tanggal Input", "")
             if tgl_input:
                 _, _, d = extract_date(tgl_input)
                 if d is not None and d <= current_day:
-                    mtd_io += 1
-            tgl_re = r.get("Tanggal Register", "")
-            if tgl_re:
-                _, _, d = extract_date(tgl_re)
+                    mtd_inp += 1
+            tgl_reg = r.get("Tanggal Register", "")
+            if tgl_reg:
+                _, _, d = extract_date(tgl_reg)
                 if d is not None and d <= current_day:
-                    mtd_re += 1
-            tgl_ps = r.get("Tanggal Complete", "")
-            if tgl_ps:
-                _, _, d = extract_date(tgl_ps)
+                    mtd_reg += 1
+            tgl_proc = r.get("Tanggal Complete", "")
+            if tgl_proc:
+                _, _, d = extract_date(tgl_proc)
                 if d is not None and d <= current_day:
-                    mtd_ps += 1
-        return io, re, ps, fo, mtd_io, mtd_re, mtd_ps
+                    mtd_proc += 1
+        return inp, reg, proc, fo, mtd_inp, mtd_reg, mtd_proc
 
     # Helper to get counts for a given year/month and optional filter (WOK or channel)
     def get_counts(y, m, filter_key, filter_value):
@@ -1557,99 +1558,102 @@ async def summary_month_selected(update: Update, context: ContextTypes.DEFAULT_T
     channels = ["B2B2C&OTHERS", "AGENCY", "GRAPARI", "SOBI AFFILIATE", "WEB&APP"]
 
     # Function to build a message for a summary table (with corrected ratios)
-    def build_summary_table(title, rows, total_io, total_re, total_ps, total_fo, total_mtd_io, total_mtd_re, total_mtd_ps, prev_total_io, prev_total_re, prev_total_ps, prev_mtd_io, prev_mtd_re, prev_mtd_ps):
+    def build_summary_table(title, rows, total_inp, total_reg, total_proc, total_fo,
+                            total_mtd_inp, total_mtd_reg, total_mtd_proc,
+                            prev_total_inp, prev_total_reg, prev_total_proc,
+                            prev_mtd_inp, prev_mtd_reg, prev_mtd_proc):
         lines = [f"📊 *{title}*", f"📅 {month_name.upper()} {year}", ""]
         for row in rows:
             lines.append(f"• *{row['name']}*")
-            lines.append(f"  IO {row['io']} | RE {row['re']} | PS {row['ps']}")
+            lines.append(f"  IO {row['inp']} | RE {row['reg']} | PS {row['proc']}")
             # Corrected ratios: RE/IO, PS/IO, PS/RE
-            re_io = (row['re'] / row['io'] * 100) if row['io'] > 0 else 0
-            ps_io = (row['ps'] / row['io'] * 100) if row['io'] > 0 else 0
-            ps_re = (row['ps'] / row['re'] * 100) if row['re'] > 0 else 0
+            re_io = (row['reg'] / row['inp'] * 100) if row['inp'] > 0 else 0
+            ps_io = (row['proc'] / row['inp'] * 100) if row['inp'] > 0 else 0
+            ps_re = (row['proc'] / row['reg'] * 100) if row['reg'] > 0 else 0
             lines.append(f"  RE/IO {re_io:.1f}% | PS/IO {ps_io:.1f}% | PS/RE {ps_re:.1f}%")
-            gap_fm_io = row['io'] - row['prev_io']
-            gap_fm_re = row['re'] - row['prev_re']
-            gap_fm_ps = row['ps'] - row['prev_ps']
-            lines.append(f"  GAP FM: IO {gap_fm_io:+d} | RE {gap_fm_re:+d} | PS {gap_fm_ps:+d}")
-            gap_mtd_io = row['mtd_io'] - row['prev_mtd_io']
-            gap_mtd_re = row['mtd_re'] - row['prev_mtd_re']
-            gap_mtd_ps = row['mtd_ps'] - row['prev_mtd_ps']
-            lines.append(f"  GAP MTD: IO {gap_mtd_io:+d} | RE {gap_mtd_re:+d} | PS {gap_mtd_ps:+d}")
-            mom_io = ((row['mtd_io'] - row['prev_mtd_io']) / row['prev_mtd_io'] * 100) if row['prev_mtd_io'] > 0 else 0
-            mom_re = ((row['mtd_re'] - row['prev_mtd_re']) / row['prev_mtd_re'] * 100) if row['prev_mtd_re'] > 0 else 0
-            mom_ps = ((row['mtd_ps'] - row['prev_mtd_ps']) / row['prev_mtd_ps'] * 100) if row['prev_mtd_ps'] > 0 else 0
-            lines.append(f"  MoM: IO {mom_io:+.1f}% | RE {mom_re:+.1f}% | PS {mom_ps:+.1f}%")
-            fo_pct = (row['fo'] / row['io'] * 100) if row['io'] > 0 else 0
-            kontrib = (row['ps'] / total_ps * 100) if total_ps > 0 else 0
+            gap_fm_inp = row['inp'] - row['prev_inp']
+            gap_fm_reg = row['reg'] - row['prev_reg']
+            gap_fm_proc = row['proc'] - row['prev_proc']
+            lines.append(f"  GAP FM: IO {gap_fm_inp:+d} | RE {gap_fm_reg:+d} | PS {gap_fm_proc:+d}")
+            gap_mtd_inp = row['mtd_inp'] - row['prev_mtd_inp']
+            gap_mtd_reg = row['mtd_reg'] - row['prev_mtd_reg']
+            gap_mtd_proc = row['mtd_proc'] - row['prev_mtd_proc']
+            lines.append(f"  GAP MTD: IO {gap_mtd_inp:+d} | RE {gap_mtd_reg:+d} | PS {gap_mtd_proc:+d}")
+            mom_inp = ((row['mtd_inp'] - row['prev_mtd_inp']) / row['prev_mtd_inp'] * 100) if row['prev_mtd_inp'] > 0 else 0
+            mom_reg = ((row['mtd_reg'] - row['prev_mtd_reg']) / row['prev_mtd_reg'] * 100) if row['prev_mtd_reg'] > 0 else 0
+            mom_proc = ((row['mtd_proc'] - row['prev_mtd_proc']) / row['prev_mtd_proc'] * 100) if row['prev_mtd_proc'] > 0 else 0
+            lines.append(f"  MoM: IO {mom_inp:+.1f}% | RE {mom_reg:+.1f}% | PS {mom_proc:+.1f}%")
+            fo_pct = (row['fo'] / row['inp'] * 100) if row['inp'] > 0 else 0
+            kontrib = (row['proc'] / total_proc * 100) if total_proc > 0 else 0
             lines.append(f"  FO {row['fo']} ({fo_pct:.1f}%) | Kontrib {kontrib:.1f}%")
         # Total row
         lines.append(f"\n• *TOTAL*")
-        lines.append(f"  IO {total_io} | RE {total_re} | PS {total_ps}")
-        total_re_io = (total_re / total_io * 100) if total_io > 0 else 0
-        total_ps_io = (total_ps / total_io * 100) if total_io > 0 else 0
-        total_ps_re = (total_ps / total_re * 100) if total_re > 0 else 0
+        lines.append(f"  IO {total_inp} | RE {total_reg} | PS {total_proc}")
+        total_re_io = (total_reg / total_inp * 100) if total_inp > 0 else 0
+        total_ps_io = (total_proc / total_inp * 100) if total_inp > 0 else 0
+        total_ps_re = (total_proc / total_reg * 100) if total_reg > 0 else 0
         lines.append(f"  RE/IO {total_re_io:.1f}% | PS/IO {total_ps_io:.1f}% | PS/RE {total_ps_re:.1f}%")
-        gap_fm_io_total = total_io - prev_total_io
-        gap_fm_re_total = total_re - prev_total_re
-        gap_fm_ps_total = total_ps - prev_total_ps
-        lines.append(f"  GAP FM: IO {gap_fm_io_total:+d} | RE {gap_fm_re_total:+d} | PS {gap_fm_ps_total:+d}")
-        gap_mtd_io_total = total_mtd_io - prev_mtd_io
-        gap_mtd_re_total = total_mtd_re - prev_mtd_re
-        gap_mtd_ps_total = total_mtd_ps - prev_mtd_ps
-        lines.append(f"  GAP MTD: IO {gap_mtd_io_total:+d} | RE {gap_mtd_re_total:+d} | PS {gap_mtd_ps_total:+d}")
-        mom_io_total = ((total_mtd_io - prev_mtd_io) / prev_mtd_io * 100) if prev_mtd_io > 0 else 0
-        mom_re_total = ((total_mtd_re - prev_mtd_re) / prev_mtd_re * 100) if prev_mtd_re > 0 else 0
-        mom_ps_total = ((total_mtd_ps - prev_mtd_ps) / prev_mtd_ps * 100) if prev_mtd_ps > 0 else 0
-        lines.append(f"  MoM: IO {mom_io_total:+.1f}% | RE {mom_re_total:+.1f}% | PS {mom_ps_total:+.1f}%")
-        fo_pct_total = (total_fo / total_io * 100) if total_io > 0 else 0
+        gap_fm_inp_total = total_inp - prev_total_inp
+        gap_fm_reg_total = total_reg - prev_total_reg
+        gap_fm_proc_total = total_proc - prev_total_proc
+        lines.append(f"  GAP FM: IO {gap_fm_inp_total:+d} | RE {gap_fm_reg_total:+d} | PS {gap_fm_proc_total:+d}")
+        gap_mtd_inp_total = total_mtd_inp - prev_mtd_inp
+        gap_mtd_reg_total = total_mtd_reg - prev_mtd_reg
+        gap_mtd_proc_total = total_mtd_proc - prev_mtd_proc
+        lines.append(f"  GAP MTD: IO {gap_mtd_inp_total:+d} | RE {gap_mtd_reg_total:+d} | PS {gap_mtd_proc_total:+d}")
+        mom_inp_total = ((total_mtd_inp - prev_mtd_inp) / prev_mtd_inp * 100) if prev_mtd_inp > 0 else 0
+        mom_reg_total = ((total_mtd_reg - prev_mtd_reg) / prev_mtd_reg * 100) if prev_mtd_reg > 0 else 0
+        mom_proc_total = ((total_mtd_proc - prev_mtd_proc) / prev_mtd_proc * 100) if prev_mtd_proc > 0 else 0
+        lines.append(f"  MoM: IO {mom_inp_total:+.1f}% | RE {mom_reg_total:+.1f}% | PS {mom_proc_total:+.1f}%")
+        fo_pct_total = (total_fo / total_inp * 100) if total_inp > 0 else 0
         lines.append(f"  FO {total_fo} ({fo_pct_total:.1f}%) | Kontrib 100.0%")
         lines.append(f"\n📅 Last Update Data: {get_last_order_date()}")
         return lines
 
     # ----- 1. per WOK summary -----
     wok_rows = []
-    total_io = total_re = total_ps = total_fo = 0
-    total_mtd_io = total_mtd_re = total_mtd_ps = 0
-    prev_total_io = prev_total_re = prev_total_ps = 0
-    prev_mtd_io = prev_mtd_re = prev_mtd_ps = 0
+    total_inp = total_reg = total_proc = total_fo = 0
+    total_mtd_inp = total_mtd_reg = total_mtd_proc = 0
+    prev_total_inp = prev_total_reg = prev_total_proc = 0
+    prev_mtd_inp = prev_mtd_reg = prev_mtd_proc = 0
     for wok in wok_list:
-        io, re, ps, fo, mtd_io, mtd_re, mtd_ps = get_counts(year, month_num, "WOK", wok)
-        prev_io, prev_re, prev_ps, prev_fo, prev_mtd_io, prev_mtd_re, prev_mtd_ps = get_counts(prev_year, prev_month, "WOK", wok)
+        inp, reg, proc, fo, mtd_inp, mtd_reg, mtd_proc = get_counts(year, month_num, "WOK", wok)
+        prev_inp, prev_reg, prev_proc, prev_fo, prev_mtd_inp, prev_mtd_reg, prev_mtd_proc = get_counts(prev_year, prev_month, "WOK", wok)
         wok_rows.append({
             "name": wok,
-            "io": io,
-            "re": re,
-            "ps": ps,
+            "inp": inp,
+            "reg": reg,
+            "proc": proc,
             "fo": fo,
-            "mtd_io": mtd_io,
-            "mtd_re": mtd_re,
-            "mtd_ps": mtd_ps,
-            "prev_io": prev_io,
-            "prev_re": prev_re,
-            "prev_ps": prev_ps,
-            "prev_mtd_io": prev_mtd_io,
-            "prev_mtd_re": prev_mtd_re,
-            "prev_mtd_ps": prev_mtd_ps,
+            "mtd_inp": mtd_inp,
+            "mtd_reg": mtd_reg,
+            "mtd_proc": mtd_proc,
+            "prev_inp": prev_inp,
+            "prev_reg": prev_reg,
+            "prev_proc": prev_proc,
+            "prev_mtd_inp": prev_mtd_inp,
+            "prev_mtd_reg": prev_mtd_reg,
+            "prev_mtd_proc": prev_mtd_proc,
         })
-        total_io += io
-        total_re += re
-        total_ps += ps
+        total_inp += inp
+        total_reg += reg
+        total_proc += proc
         total_fo += fo
-        total_mtd_io += mtd_io
-        total_mtd_re += mtd_re
-        total_mtd_ps += mtd_ps
-        prev_total_io += prev_io
-        prev_total_re += prev_re
-        prev_total_ps += prev_ps
-        prev_mtd_io += prev_mtd_io
-        prev_mtd_re += prev_mtd_re
-        prev_mtd_ps += prev_mtd_ps
+        total_mtd_inp += mtd_inp
+        total_mtd_reg += mtd_reg
+        total_mtd_proc += mtd_proc
+        prev_total_inp += prev_inp
+        prev_total_reg += prev_reg
+        prev_total_proc += prev_proc
+        prev_mtd_inp += prev_mtd_inp
+        prev_mtd_reg += prev_mtd_reg
+        prev_mtd_proc += prev_mtd_proc
 
     lines1 = build_summary_table("RINGKASAN PER WOK", wok_rows,
-                                 total_io, total_re, total_ps, total_fo,
-                                 total_mtd_io, total_mtd_re, total_mtd_ps,
-                                 prev_total_io, prev_total_re, prev_total_ps,
-                                 prev_mtd_io, prev_mtd_re, prev_mtd_ps)
+                                 total_inp, total_reg, total_proc, total_fo,
+                                 total_mtd_inp, total_mtd_reg, total_mtd_proc,
+                                 prev_total_inp, prev_total_reg, prev_total_proc,
+                                 prev_mtd_inp, prev_mtd_reg, prev_mtd_proc)
     msg = "\n".join(lines1)
     if len(msg) > 4000:
         parts = []
@@ -1672,48 +1676,48 @@ async def summary_month_selected(update: Update, context: ContextTypes.DEFAULT_T
 
     # ----- 2. overall per channel summary -----
     channel_rows = []
-    total_io_chan = total_re_chan = total_ps_chan = total_fo_chan = 0
-    total_mtd_io_chan = total_mtd_re_chan = total_mtd_ps_chan = 0
-    prev_total_io_chan = prev_total_re_chan = prev_total_ps_chan = 0
-    prev_mtd_io_chan = prev_mtd_re_chan = prev_mtd_ps_chan = 0
+    total_inp_chan = total_reg_chan = total_proc_chan = total_fo_chan = 0
+    total_mtd_inp_chan = total_mtd_reg_chan = total_mtd_proc_chan = 0
+    prev_total_inp_chan = prev_total_reg_chan = prev_total_proc_chan = 0
+    prev_mtd_inp_chan = prev_mtd_reg_chan = prev_mtd_proc_chan = 0
     for ch in channels:
-        io, re, ps, fo, mtd_io, mtd_re, mtd_ps = get_counts(year, month_num, "Channel", ch)
-        prev_io, prev_re, prev_ps, prev_fo, prev_mtd_io, prev_mtd_re, prev_mtd_ps = get_counts(prev_year, prev_month, "Channel", ch)
+        inp, reg, proc, fo, mtd_inp, mtd_reg, mtd_proc = get_counts(year, month_num, "Channel", ch)
+        prev_inp, prev_reg, prev_proc, prev_fo, prev_mtd_inp, prev_mtd_reg, prev_mtd_proc = get_counts(prev_year, prev_month, "Channel", ch)
         channel_rows.append({
             "name": ch,
-            "io": io,
-            "re": re,
-            "ps": ps,
+            "inp": inp,
+            "reg": reg,
+            "proc": proc,
             "fo": fo,
-            "mtd_io": mtd_io,
-            "mtd_re": mtd_re,
-            "mtd_ps": mtd_ps,
-            "prev_io": prev_io,
-            "prev_re": prev_re,
-            "prev_ps": prev_ps,
-            "prev_mtd_io": prev_mtd_io,
-            "prev_mtd_re": prev_mtd_re,
-            "prev_mtd_ps": prev_mtd_ps,
+            "mtd_inp": mtd_inp,
+            "mtd_reg": mtd_reg,
+            "mtd_proc": mtd_proc,
+            "prev_inp": prev_inp,
+            "prev_reg": prev_reg,
+            "prev_proc": prev_proc,
+            "prev_mtd_inp": prev_mtd_inp,
+            "prev_mtd_reg": prev_mtd_reg,
+            "prev_mtd_proc": prev_mtd_proc,
         })
-        total_io_chan += io
-        total_re_chan += re
-        total_ps_chan += ps
+        total_inp_chan += inp
+        total_reg_chan += reg
+        total_proc_chan += proc
         total_fo_chan += fo
-        total_mtd_io_chan += mtd_io
-        total_mtd_re_chan += mtd_re
-        total_mtd_ps_chan += mtd_ps
-        prev_total_io_chan += prev_io
-        prev_total_re_chan += prev_re
-        prev_total_ps_chan += prev_ps
-        prev_mtd_io_chan += prev_mtd_io
-        prev_mtd_re_chan += prev_mtd_re
-        prev_mtd_ps_chan += prev_mtd_ps
+        total_mtd_inp_chan += mtd_inp
+        total_mtd_reg_chan += mtd_reg
+        total_mtd_proc_chan += mtd_proc
+        prev_total_inp_chan += prev_inp
+        prev_total_reg_chan += prev_reg
+        prev_total_proc_chan += prev_proc
+        prev_mtd_inp_chan += prev_mtd_inp
+        prev_mtd_reg_chan += prev_mtd_reg
+        prev_mtd_proc_chan += prev_mtd_proc
 
     lines2 = build_summary_table("RINGKASAN PER CHANNEL", channel_rows,
-                                 total_io_chan, total_re_chan, total_ps_chan, total_fo_chan,
-                                 total_mtd_io_chan, total_mtd_re_chan, total_mtd_ps_chan,
-                                 prev_total_io_chan, prev_total_re_chan, prev_total_ps_chan,
-                                 prev_mtd_io_chan, prev_mtd_re_chan, prev_mtd_ps_chan)
+                                 total_inp_chan, total_reg_chan, total_proc_chan, total_fo_chan,
+                                 total_mtd_inp_chan, total_mtd_reg_chan, total_mtd_proc_chan,
+                                 prev_total_inp_chan, prev_total_reg_chan, prev_total_proc_chan,
+                                 prev_mtd_inp_chan, prev_mtd_reg_chan, prev_mtd_proc_chan)
     msg2 = "\n".join(lines2)
     if len(msg2) > 4000:
         parts = []
@@ -1737,10 +1741,10 @@ async def summary_month_selected(update: Update, context: ContextTypes.DEFAULT_T
     # ----- 3. per WOK channel summaries -----
     for wok in wok_list:
         wok_channel_rows = []
-        total_wok_io = total_wok_re = total_wok_ps = total_wok_fo = 0
-        total_wok_mtd_io = total_wok_mtd_re = total_wok_mtd_ps = 0
-        prev_total_wok_io = prev_total_wok_re = prev_total_wok_ps = 0
-        prev_mtd_wok_io = prev_mtd_wok_re = prev_mtd_wok_ps = 0
+        total_wok_inp = total_wok_reg = total_wok_proc = total_wok_fo = 0
+        total_wok_mtd_inp = total_wok_mtd_reg = total_wok_mtd_proc = 0
+        prev_total_wok_inp = prev_total_wok_reg = prev_total_wok_proc = 0
+        prev_mtd_wok_inp = prev_mtd_wok_reg = prev_mtd_wok_proc = 0
         for ch in channels:
             # Filter records for this WOK and channel
             filtered = []
@@ -1749,7 +1753,7 @@ async def summary_month_selected(update: Update, context: ContextTypes.DEFAULT_T
                 yr, mo, _ = extract_date(tgl)
                 if yr == year and mo == month_num and rec.get("WOK", "") == wok and rec.get("Channel Name", "") == ch:
                     filtered.append(rec)
-            io, re, ps, fo, mtd_io, mtd_re, mtd_ps = compute_metrics_full_and_mtd(filtered)
+            inp, reg, proc, fo, mtd_inp, mtd_reg, mtd_proc = compute_metrics_full_and_mtd(filtered)
             # Previous month
             filtered_prev = []
             for rec in records:
@@ -1757,42 +1761,42 @@ async def summary_month_selected(update: Update, context: ContextTypes.DEFAULT_T
                 yr, mo, _ = extract_date(tgl)
                 if yr == prev_year and mo == prev_month and rec.get("WOK", "") == wok and rec.get("Channel Name", "") == ch:
                     filtered_prev.append(rec)
-            prev_io, prev_re, prev_ps, prev_fo, prev_mtd_io, prev_mtd_re, prev_mtd_ps = compute_metrics_full_and_mtd(filtered_prev)
+            prev_inp, prev_reg, prev_proc, prev_fo, prev_mtd_inp, prev_mtd_reg, prev_mtd_proc = compute_metrics_full_and_mtd(filtered_prev)
             wok_channel_rows.append({
                 "name": ch,
-                "io": io,
-                "re": re,
-                "ps": ps,
+                "inp": inp,
+                "reg": reg,
+                "proc": proc,
                 "fo": fo,
-                "mtd_io": mtd_io,
-                "mtd_re": mtd_re,
-                "mtd_ps": mtd_ps,
-                "prev_io": prev_io,
-                "prev_re": prev_re,
-                "prev_ps": prev_ps,
-                "prev_mtd_io": prev_mtd_io,
-                "prev_mtd_re": prev_mtd_re,
-                "prev_mtd_ps": prev_mtd_ps,
+                "mtd_inp": mtd_inp,
+                "mtd_reg": mtd_reg,
+                "mtd_proc": mtd_proc,
+                "prev_inp": prev_inp,
+                "prev_reg": prev_reg,
+                "prev_proc": prev_proc,
+                "prev_mtd_inp": prev_mtd_inp,
+                "prev_mtd_reg": prev_mtd_reg,
+                "prev_mtd_proc": prev_mtd_proc,
             })
-            total_wok_io += io
-            total_wok_re += re
-            total_wok_ps += ps
+            total_wok_inp += inp
+            total_wok_reg += reg
+            total_wok_proc += proc
             total_wok_fo += fo
-            total_wok_mtd_io += mtd_io
-            total_wok_mtd_re += mtd_re
-            total_wok_mtd_ps += mtd_ps
-            prev_total_wok_io += prev_io
-            prev_total_wok_re += prev_re
-            prev_total_wok_ps += prev_ps
-            prev_mtd_wok_io += prev_mtd_io
-            prev_mtd_wok_re += prev_mtd_re
-            prev_mtd_wok_ps += prev_mtd_ps
+            total_wok_mtd_inp += mtd_inp
+            total_wok_mtd_reg += mtd_reg
+            total_wok_mtd_proc += mtd_proc
+            prev_total_wok_inp += prev_inp
+            prev_total_wok_reg += prev_reg
+            prev_total_wok_proc += prev_proc
+            prev_mtd_wok_inp += prev_mtd_inp
+            prev_mtd_wok_reg += prev_mtd_reg
+            prev_mtd_wok_proc += prev_mtd_proc
 
         lines_wok = build_summary_table(f"RINGKASAN PER CHANNEL UNTUK {wok}", wok_channel_rows,
-                                        total_wok_io, total_wok_re, total_wok_ps, total_wok_fo,
-                                        total_wok_mtd_io, total_wok_mtd_re, total_wok_mtd_ps,
-                                        prev_total_wok_io, prev_total_wok_re, prev_total_wok_ps,
-                                        prev_mtd_wok_io, prev_mtd_wok_re, prev_mtd_wok_ps)
+                                        total_wok_inp, total_wok_reg, total_wok_proc, total_wok_fo,
+                                        total_wok_mtd_inp, total_wok_mtd_reg, total_wok_mtd_proc,
+                                        prev_total_wok_inp, prev_total_wok_reg, prev_total_wok_proc,
+                                        prev_mtd_wok_inp, prev_mtd_wok_reg, prev_mtd_wok_proc)
         msg_wok = "\n".join(lines_wok)
         if len(msg_wok) > 4000:
             parts = []
@@ -1813,7 +1817,7 @@ async def summary_month_selected(update: Update, context: ContextTypes.DEFAULT_T
         else:
             await query.message.reply_text(msg_wok, parse_mode="Markdown")
 
-    # --- Popular Paket Summary – ALL COMPLETED packages (no limit) – FIXED ---
+    # --- Popular Paket Summary – ALL COMPLETED packages (no limit) ---
     await query.message.reply_text("📦 Menghitung semua paket dengan status COMPLETED...")
 
     def clean_field(s):
@@ -1822,34 +1826,18 @@ async def summary_month_selected(update: Update, context: ContextTypes.DEFAULT_T
         s = re.sub(r'[\u200b\u00a0\u200c\u200d]', '', str(s))
         return s.strip()
 
-    def robust_extract_date(date_str):
-        if not date_str:
-            return None, None
-        date_str = clean_field(date_str)
-        for fmt in ["%d/%m/%Y %H:%M", "%d/%m/%Y", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d"]:
-            try:
-                dt = datetime.strptime(date_str, fmt)
-                return dt.year, dt.month
-            except ValueError:
-                continue
-        # fallback: try to split and guess
-        try:
-            parts = date_str.split()
-            date_part = parts[0]
-            if '-' in date_part:
-                y, m, d = map(int, date_part.split('-'))
-                return y, m
-            else:
-                d, m, y = map(int, date_part.split('/'))
-                return y, m
-        except:
-            return None, None
+    def is_completed(status):
+        if not status:
+            return False
+        # Normalise: remove all non-alphanumeric, lowercase, and compare
+        norm = re.sub(r'[^a-z0-9]', '', status.lower())
+        return norm == "completed"
 
     def get_all_paket_with_pct(records_filter_func, total_completed_orders):
         paket_counts = {}
         for rec in records_filter_func:
-            status = clean_field(rec.get("Status Order", "")).upper()
-            if status != "COMPLETED":
+            status = clean_field(rec.get("Status Order", ""))
+            if not is_completed(status):
                 continue
             paket = clean_field(rec.get("Paket", ""))
             if not paket:
@@ -1866,15 +1854,14 @@ async def summary_month_selected(update: Update, context: ContextTypes.DEFAULT_T
     global_completed_records = []
     for rec in records:
         tgl = rec.get("Tanggal Input", "")
-        y, m = robust_extract_date(tgl)
+        y, m, _ = extract_date(tgl)
         if y == year and m == month_num:
-            status = clean_field(rec.get("Status Order", "")).upper()
-            if status == "COMPLETED":
+            status = clean_field(rec.get("Status Order", ""))
+            if is_completed(status):
                 global_completed_records.append(rec)
 
     global_total = len(global_completed_records)
     logger.info(f"Global completed orders for {month_name} {year}: {global_total}")
-    # Debug: log first few paket values
     sample_pakets = [clean_field(rec.get("Paket", "")) for rec in global_completed_records[:10]]
     logger.info(f"Sample pakets in global: {sample_pakets}")
 
@@ -1895,10 +1882,10 @@ async def summary_month_selected(update: Update, context: ContextTypes.DEFAULT_T
             if rec.get("WOK", "") != wok:
                 continue
             tgl = rec.get("Tanggal Input", "")
-            y, m = robust_extract_date(tgl)
+            y, m, _ = extract_date(tgl)
             if y == year and m == month_num:
-                status = clean_field(rec.get("Status Order", "")).upper()
-                if status == "COMPLETED":
+                status = clean_field(rec.get("Status Order", ""))
+                if is_completed(status):
                     wok_completed.append(rec)
         wok_total = len(wok_completed)
         wok_pakets = get_all_paket_with_pct(wok_completed, wok_total)
