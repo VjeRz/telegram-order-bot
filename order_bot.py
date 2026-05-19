@@ -1432,15 +1432,15 @@ async def team_leader_option_callback(update: Update, context: ContextTypes.DEFA
         writer = csv.writer(output)
         writer.writerow(["SalesForce", "IO", "RE", "PS", "RE/IO%", "PS/IO%", "PS/RE%", "FO", "FO%"])
         for sf, m in sales_metrics.items():
-            io = m["io"]
-            re = m["re"]
-            ps = m["ps"]
-            fo = m["fo"]
-            re_io = (re / io * 100) if io > 0 else 0
-            ps_io = (ps / io * 100) if io > 0 else 0
-            ps_re = (ps / re * 100) if re > 0 else 0
-            fo_pct = (fo / io * 100) if io > 0 else 0
-            writer.writerow([sf, io, re, ps, f"{re_io:.2f}", f"{ps_io:.2f}", f"{ps_re:.2f}", fo, f"{fo_pct:.2f}"])
+            io_val = m["io"]
+            re_val = m["re"]
+            ps_val = m["ps"]
+            fo_val = m["fo"]
+            re_io = (re_val / io_val * 100) if io_val > 0 else 0
+            ps_io = (ps_val / io_val * 100) if io_val > 0 else 0
+            ps_re = (ps_val / re_val * 100) if re_val > 0 else 0
+            fo_pct = (fo_val / io_val * 100) if io_val > 0 else 0
+            writer.writerow([sf, io_val, re_val, ps_val, f"{re_io:.2f}", f"{ps_io:.2f}", f"{ps_re:.2f}", fo_val, f"{fo_pct:.2f}"])
         output.seek(0)
         filename = f"metrics_{wok}_{year}_{month_num}_{target_channel}.csv"
         await query.message.reply_document(document=output, filename=filename, caption=f"📊 Metrics per Salesperson - {wok} {month_name} {year}")
